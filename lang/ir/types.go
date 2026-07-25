@@ -106,6 +106,20 @@ type FBStepCtx struct {
 // invoking Step.
 type FBStepFn func(inst *FBInstance, ctx FBStepCtx) error
 
+// Slot returns the i'th slot of the Inputs ‖ Outputs ‖ Internals layout
+// without materialising the combined slice — the VM's per-scan path, kept
+// allocation-free.
+func (d *FBDef) Slot(i int) FBSlot {
+	if i < len(d.Inputs) {
+		return d.Inputs[i]
+	}
+	i -= len(d.Inputs)
+	if i < len(d.Outputs) {
+		return d.Outputs[i]
+	}
+	return d.Internals[i-len(d.Outputs)]
+}
+
 // AllSlots returns the FB's slot layout as a single ordered slice
 // matching the runtime FBInstance.Slots layout.
 func (d *FBDef) AllSlots() []FBSlot {

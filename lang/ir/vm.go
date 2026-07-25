@@ -197,7 +197,7 @@ func execStmt(ctx *EvalCtx, s Stmt) error {
 			if in.SlotIdx < 0 || in.SlotIdx >= len(inst.Slots) {
 				return fmt.Errorf("FB input slot %d out of range", in.SlotIdx)
 			}
-			inst.Slots[in.SlotIdx] = coerceValue(v, n.Def.AllSlots()[in.SlotIdx].Type)
+			inst.Slots[in.SlotIdx] = coerceValue(v, n.Def.Slot(in.SlotIdx).Type)
 		}
 		stepCtx := FBStepCtx{NowMs: ctx.Host.NowMs(), Host: ctx.Host}
 		if err := n.Def.Step(inst, stepCtx); err != nil {
