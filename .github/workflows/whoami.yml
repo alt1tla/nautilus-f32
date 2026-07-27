@@ -18,5 +18,9 @@ jobs:
           echo "--- profile/me ---"
           curl -s -u ":$VSCE_PAT" "https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1-preview.3" \
             | jq 'if .displayName then {displayName, emailAddress, coreEmail: .coreAttributes.EmailAddress.value} else . end' | mask
-          echo "--- verify-pat against publisher joyautomation ---"
-          npx --yes @vscode/vsce verify-pat joyautomation -p "$VSCE_PAT" && echo "PAT manages publisher: joyautomation" || echo "verify-pat failed"
+          echo "--- publisher joyautomation (PAT auth) ---"
+          curl -s -u ":$VSCE_PAT" "https://marketplace.visualstudio.com/_apis/gallery/publishers/joyautomation?api-version=7.1-preview.1" \
+            | jq '{publisherName, displayName, flags, domain, isDomainVerified, extensions: [.extensions[]? | {extensionName, flags}]}' | mask
+          echo "--- extension vscode-iec (PAT auth, incl. hidden) ---"
+          curl -s -u ":$VSCE_PAT" "https://marketplace.visualstudio.com/_apis/gallery/publishers/joyautomation/extensions/vscode-iec?api-version=7.1-preview.1&flags=1" \
+            | jq 'if .extensionName then {extensionName, flags, lastUpdated, publishedDate, versions: [.versions[]? | {version, flags, lastUpdated}]} else . end' | mask
