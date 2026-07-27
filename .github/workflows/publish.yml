@@ -78,6 +78,14 @@ jobs:
           echo "pre=$pre" >> "$GITHUB_OUTPUT"
       - if: steps.v.outputs.publish == 'true'
         run: npm ci
+      # vscode:prepublish builds the webview, which needs its own deps and
+      # the dist/ of the locally-linked hmi package (file:../../../hmi).
+      - name: Build hmi (webview-ui's local dependency)
+        if: steps.v.outputs.publish == 'true'
+        run: npm ci && npm run package
+        working-directory: hmi
+      - if: steps.v.outputs.publish == 'true'
+        run: npm ci --prefix webview-ui
       - name: Publish to VS Code Marketplace
         if: steps.v.outputs.publish == 'true'
         env:

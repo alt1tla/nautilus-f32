@@ -43,6 +43,12 @@ jobs:
         with:
           node-version: "22"
       - run: npm ci
+      # vsce package runs vscode:prepublish, which builds the webview — it
+      # needs its own deps and the locally-linked hmi package's dist/.
+      - name: Build hmi (webview-ui's local dependency)
+        run: npm ci && npm run package
+        working-directory: hmi
+      - run: npm ci --prefix webview-ui
       - run: npm run compile
       - name: Package VSIX
         run: |
