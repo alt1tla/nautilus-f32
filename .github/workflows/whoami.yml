@@ -1,0 +1,22 @@
+# One-off diagnostic: identify which Microsoft identity owns the stored
+# VSCE_PAT (and therefore the Marketplace publisher). Manual trigger only;
+# prints display name + masked email — never the token.
+name: whoami
+on: workflow_dispatch
+jobs:
+  pat-owner:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Identify VSCE_PAT owner (masked)
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          mask() { sed -E 's/([[:alnum:]])[[:alnum:]._-]*@([[:alnum:]])[[:alnum:].-]*(\.[[:alpha:]]+)/\1***@\2***\3/g'; }
+          echo "--- connectionData ---"
+          curl -s -u ":$VSCE_PAT" "https://app.vssps.visualstudio.com/_apis/connectionData" \
+            | jq '.authenticatedUser | {providerDisplayName, customDisplayName, properties}' | mask
+          echo "--- profile/me ---"
+          curl -s -u ":$VSCE_PAT" "https://app.vssps.visualstudio.com/_apis/profile/profiles/me?api-version=7.1-preview.3" \
+            | jq 'if .displayName then {displayName, emailAddress, coreEmail: .coreAttributes.EmailAddress.value} else . end' | mask
+          echo "--- verify-pat against publisher joyautomation ---"
+          npx --yes @vscode/vsce verify-pat joyautomation -p "$VSCE_PAT" && echo "PAT manages publisher: joyautomation" || echo "verify-pat failed"
