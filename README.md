@@ -108,10 +108,10 @@ Open **http://localhost:8080** for the built-in live dashboard, or
 **4. Develop in VS Code**
 
 Install **nautilus IEC 61131-3** from the
-[VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=joyautomation.vscode-iec)
-or [Open VSX](https://open-vsx.org/extension/joyautomation/vscode-iec). It
+[VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=joyauto.vscode-iec)
+or [Open VSX](https://open-vsx.org/extension/joyauto/vscode-iec). It
 currently ships on the **pre-release** channel, so use *Install Pre-Release
-Version* (or `code --install-extension joyautomation.vscode-iec --pre-release`).
+Version* (or `code --install-extension joyauto.vscode-iec --pre-release`).
 Open your project folder — it recommends the extension — and with `go run .`
 running you get compile diagnostics as you type, go-to-definition / hover /
 completion, and **live tag values as pills** next to identifiers in

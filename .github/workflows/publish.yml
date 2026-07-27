@@ -60,7 +60,7 @@ jobs:
         id: v
         run: |
           repo=$(node -p "require('./package.json').version")
-          reg=$(npx --yes @vscode/vsce show joyautomation.vscode-iec --json 2>/dev/null \
+          reg=$(npx --yes @vscode/vsce show joyauto.vscode-iec --json 2>/dev/null \
                 | node -p "JSON.parse(require('fs').readFileSync(0)).versions[0].version" \
                 || echo 0.0.0)
           echo "repo=$repo marketplace=$reg"
@@ -99,8 +99,10 @@ jobs:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
         run: |
           if [ -z "$OVSX_PAT" ]; then echo "OVSX_PAT not set — skipping Open VSX publish"; exit 0; fi
-          ovsx_reg=$(curl -s https://open-vsx.org/api/joyautomation/vscode-iec \
+          ovsx_reg=$(curl -s https://open-vsx.org/api/joyauto/vscode-iec \
                      | node -p "JSON.parse(require('fs').readFileSync(0)).version" || echo 0.0.0)
           repo=$(node -p "require('./package.json').version")
           if [ "$ovsx_reg" = "$repo" ]; then echo "Open VSX already at $repo — skipping"; exit 0; fi
+          # Namespace must exist and match the VSIX publisher; idempotent.
+          npx --yes ovsx create-namespace joyauto -p "$OVSX_PAT" 2>/dev/null || true
           npx --yes ovsx publish ${{ steps.v.outputs.pre }} -p "$OVSX_PAT"

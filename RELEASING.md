@@ -52,10 +52,10 @@ the extension or HMI versions.
 ## Registry credentials (Settings → Secrets and variables → Actions)
 
 - **`VSCE_PAT`** (secret) — VS Code Marketplace. Azure DevOps org, publisher
-  `joyautomation` (already in `package.json`), Personal Access Token with
+  `joyauto` (already in `package.json`), Personal Access Token with
   Marketplace → Manage scope.
 - **`OVSX_PAT`** (secret) — Open VSX. Eclipse Foundation account + signed
-  Publisher Agreement, `joyautomation` namespace, access token.
+  Publisher Agreement, `joyauto` namespace, access token.
 - **npm — OIDC, no secret.** On npmjs.com, the package's Settings → Trusted
   Publisher must point at repo `joyautomation/nautilus`, workflow
   **`publish.yml`** (npm verifies the workflow *filename*; it was previously
