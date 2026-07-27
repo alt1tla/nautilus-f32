@@ -1,0 +1,22 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "IEC 61131-3 Sequential Function Chart",
+  "scopeName": "source.iec-sfc",
+  "patterns": [
+    {
+      "name": "keyword.control.iec-sfc",
+      "match": "(?i)\\b(SFC|END_SFC|INITIAL_STEP|STEP|END_STEP|TRANSITION|END_TRANSITION|FROM|TO|ACTION|END_ACTION)\\b"
+    },
+    {
+      "comment": "action qualifiers at the start of an association line (N/S/R/P/P0/P1 and the not-yet-supported timed ones)",
+      "name": "storage.modifier.qualifier.iec-sfc",
+      "match": "(?i)(?<=^|;)\\s*\\b(N|S|R|P0|P1|P|L|D|SD|DS|SL)\\b(?=\\s+[A-Za-z_])"
+    },
+    {
+      "comment": "step activity/timer attributes: Step.X, Step.T",
+      "name": "support.variable.step-attr.iec-sfc",
+      "match": "\\.(X|T)\\b"
+    },
+    { "include": "source.iec-st" }
+  ]
+}
