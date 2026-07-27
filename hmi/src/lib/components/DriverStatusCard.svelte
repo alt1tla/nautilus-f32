@@ -1,0 +1,216 @@
+<script lang="ts">
+	// A field driver's / publisher's health card: connection state, a human
+	// sentence, uptime, a labeled metrics grid, and — for a Sparkplug node —
+	// its devices. Feed it one `DriverStatus` from GET /api/drivers (or an
+	// entry of `frame.drivers`). Protocol-agnostic: it renders whatever
+	// metrics and devices the status carries.
+	import ConnectionBadge from './ConnectionBadge.svelte';
+	import type { DriverStatus, DriverMetric } from '../types.js';
+
+	let { driver, now = Date.now() }: { driver: DriverStatus; now?: number } = $props();
+
+	// A friendly protocol label + accent for the kind chip.
+	const KIND: Record<string, { label: string; color: string }> = {
+		'ethernet-ip': { label: 'EtherNet/IP', color: 'var(--s1)' },
+		sparkplug: { label: 'Sparkplug B', color: 'var(--accent)' }
+	};
+	const kind = $derived(KIND[driver.kind] ?? { label: driver.kind, color: 'var(--muted)' });
+
+	const uptime = $derived.by(() => {
+		if (!driver.sinceMs || driver.state !== 'connected') return '';
+		const s = Math.max(0, Math.floor((now - driver.sinceMs) / 1000));
+		if (s < 60) return `${s}s`;
+		if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+		if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+		return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
+	});
+
+	const fmt = (m: DriverMetric) => {
+		if (m.text) return m.text;
+		const v = m.value;
+		const n = Number.isInteger(v) ? v.toLocaleString() : v.toFixed(2);
+		return m.unit ? `${n} ${m.unit}` : n;
+	};
+</script>
+
+<div class="card" class:bad={driver.state === 'error' || driver.state === 'degraded'}>
+	<div class="head">
+		<div class="title">
+			<span class="name">{driver.name}</span>
+			<span class="kind" style="--k: {kind.color}">{kind.label}</span>
+		</div>
+		<ConnectionBadge state={driver.state} />
+	</div>
+
+	<p class="detail">{driver.detail}</p>
+	<p class="msg">{driver.message}{#if uptime}<span class="uptime"> · up {uptime}</span>{/if}</p>
+
+	{#if driver.lastError}
+		<p class="err" title={driver.lastError}>{driver.lastError}</p>
+	{/if}
+
+	{#if driver.metrics?.length}
+		<div class="metrics">
+			{#each driver.metrics as m (m.label)}
+				<div class="metric">
+					<span class="mv">{fmt(m)}</span>
+					<span class="ml">{m.label}</span>
+				</div>
+			{/each}
+		</div>
+	{/if}
+
+	{#if driver.devices?.length}
+		<div class="devices">
+			<span class="dhead">devices</span>
+			{#each driver.devices as d (d.id)}
+				<div class="device">
+					<ConnectionBadge state={d.online ? 'connected' : 'offline'} label={d.id} size="sm" />
+					{#if d.detail}<span class="ddetail">{d.detail}</span>{/if}
+				</div>
+			{/each}
+		</div>
+	{/if}
+</div>
+
+<style>
+	.card {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius, 8px);
+		padding: 14px 16px;
+		display: grid;
+		/* minmax(0,1fr) is load-bearing: a single implicit `auto` column
+		   sizes to the content's max-content and overflows; a 1fr track is
+		   constrained to the card width, so long names/metrics stay inside. */
+		grid-template-columns: minmax(0, 1fr);
+		gap: 8px;
+		min-width: 260px;
+		overflow: hidden;
+	}
+	.card.bad {
+		border-color: color-mix(in srgb, var(--crit) 40%, var(--border));
+	}
+	.head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 10px;
+		min-width: 0;
+	}
+	.title {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+		min-width: 0;
+	}
+	.name {
+		font-weight: 650;
+		font-size: var(--font-md);
+		color: var(--ink);
+		font-family: var(--mono);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.kind {
+		font-size: var(--font-2xs);
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--k);
+		border: 1px solid color-mix(in srgb, var(--k) 40%, var(--border));
+		border-radius: 4px;
+		padding: 1px 5px;
+		flex: none;
+	}
+	.detail {
+		margin: 0;
+		font-size: var(--font-2xs);
+		color: var(--muted);
+		font-family: var(--mono);
+	}
+	.msg {
+		margin: 0;
+		font-size: var(--font-xs);
+		color: var(--ink-2);
+	}
+	.uptime {
+		color: var(--muted);
+	}
+	.err {
+		margin: 0;
+		font-size: var(--font-2xs);
+		color: var(--crit);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.metrics {
+		display: grid;
+		/* min-width:0 lets the grid + tiles shrink to the card width; without
+		   it, nowrap tiles size to their intrinsic width and overflow. */
+		grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+		gap: 8px;
+		margin-top: 2px;
+		min-width: 0;
+	}
+	.metric {
+		background: var(--surface-2);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 6px 8px;
+		/* Fixed height + non-wrapping value: a metric whose text changes each
+		   frame (a freshness time) must never reflow the card. */
+		min-height: 44px;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		gap: 1px;
+		overflow: hidden;
+	}
+	.mv {
+		font-family: var(--mono);
+		font-weight: 650;
+		font-size: var(--font-sm);
+		color: var(--ink);
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.ml {
+		font-size: var(--font-2xs);
+		color: var(--muted);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.devices {
+		display: grid;
+		gap: 6px;
+		margin-top: 2px;
+		border-top: 1px solid var(--border);
+		padding-top: 8px;
+	}
+	.dhead {
+		font-size: var(--font-2xs);
+		font-weight: 600;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--muted);
+	}
+	.device {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.ddetail {
+		font-size: var(--font-2xs);
+		color: var(--muted);
+		font-family: var(--mono);
+	}
+</style>

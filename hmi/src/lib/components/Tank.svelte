@@ -102,7 +102,7 @@
 	<!-- level graduations -->
 	{#each [0, 25, 50, 75, 100] as g}
 		<line x1={X1 + 8} x2={X1 + 16} y1={Y1 - (g / 100) * innerH} y2={Y1 - (g / 100) * innerH} stroke="var(--muted, #898781)" stroke-width="1" />
-		<text x={X1 + 20} y={Y1 - (g / 100) * innerH + 3.5} font-size="10" fill="var(--muted, #898781)">{g}</text>
+		<text x={X1 + 20} y={Y1 - (g / 100) * innerH + 3.5} font-size="12" fill="var(--muted, #898781)">{g}</text>
 	{/each}
 
 	{#if label}

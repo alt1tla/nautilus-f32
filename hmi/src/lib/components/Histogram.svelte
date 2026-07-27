@@ -32,11 +32,11 @@
 				<title>{i * bucketWidth}–{(i + 1) * bucketWidth} {unit}: {c} ({total ? ((c / total) * 100).toFixed(1) : 0}%)</title>
 			</rect>
 			{#if i % 2 === 0}
-				<text x={i * bw} y={height - 6} font-size="10" fill="var(--muted)" class="num">{i * bucketWidth}</text>
+				<text x={i * bw} y={height - 6} font-size="12" fill="var(--muted)" class="num">{i * bucketWidth}</text>
 			{/if}
 		{/each}
 		<line x1="0" x2={w} y1={height - PAD.b} y2={height - PAD.b} stroke="var(--axis)" />
-		<text x={w - 2} y={height - 6} text-anchor="end" font-size="10" fill="var(--muted)">{unit}</text>
+		<text x={w - 2} y={height - 6} text-anchor="end" font-size="12" fill="var(--muted)">{unit}</text>
 	</svg>
 </div>
 

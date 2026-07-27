@@ -64,7 +64,7 @@
 	}
 	.lab {
 		display: block;
-		font-size: 11px;
+		font-size: var(--font-2xs);
 		color: var(--muted);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;

@@ -57,11 +57,11 @@
 	<text x={CX} y={CY + 2} text-anchor="middle" font-size="26" font-weight="650" fill="var(--ink)" class="num">
 		{value.toFixed(decimals)}
 	</text>
-	<text x={CX} y={CY + 18} text-anchor="middle" font-size="11" fill="var(--muted)">{unit}</text>
+	<text x={CX} y={CY + 18} text-anchor="middle" font-size="12" fill="var(--muted)">{unit}</text>
 	<text x={CX} y={CY + 42} text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink-2)">{label}</text>
 	{#each [0, 1] as f}
 		{@const [tx, ty] = polar(f)}
-		<text x={tx} y={ty + 16} text-anchor="middle" font-size="10" fill="var(--muted)" class="num">{f ? max : min}</text>
+		<text x={tx} y={ty + 16} text-anchor="middle" font-size="12" fill="var(--muted)" class="num">{f ? max : min}</text>
 	{/each}
 </svg>
 

@@ -9,6 +9,17 @@
 	--radius: 10px;
 	--font: system-ui, -apple-system, 'Segoe UI', sans-serif;
 	--mono: ui-monospace, 'SF Mono', 'Cascadia Mono', monospace;
+
+	/* Type scale — the floor for anything the operator reads. --font-2xs is
+	   the absolute minimum (12px) and is reserved for tiny all-caps section
+	   labels/eyebrows (pair it with letter-spacing); everything else that's
+	   read as prose or is interactive (buttons, values, readouts) should sit
+	   at --font-sm or above. Nothing in the kit should go below --font-2xs. */
+	--font-2xs: 0.75rem; /* 12px — all-caps labels only */
+	--font-xs: 0.8125rem; /* 13px */
+	--font-sm: 0.875rem; /* 14px */
+	--font-md: 0.9375rem; /* 15px */
+	--font-lg: 1.25rem; /* 20px */
 }
 
 :root,
@@ -100,18 +111,18 @@ body {
 	background: var(--bg);
 	color: var(--ink);
 	font-family: var(--font);
-	font-size: 14px;
+	font-size: var(--font-sm);
 	line-height: 1.45;
 }
 
 h1 {
-	font-size: 20px;
+	font-size: var(--font-lg);
 	font-weight: 650;
 	margin: 0 0 4px;
 }
 
 h2 {
-	font-size: 13px;
+	font-size: var(--font-xs);
 	font-weight: 600;
 	text-transform: uppercase;
 	letter-spacing: 0.06em;
@@ -141,7 +152,7 @@ a {
 
 .subtle {
 	color: var(--muted);
-	font-size: 12px;
+	font-size: var(--font-2xs);
 }
 
 button,
@@ -213,7 +224,7 @@ table {
 th {
 	text-align: left;
 	color: var(--muted);
-	font-size: 11px;
+	font-size: var(--font-2xs);
 	text-transform: uppercase;
 	letter-spacing: 0.06em;
 	font-weight: 600;

@@ -26,7 +26,7 @@
 		windowS?: number;
 	} = $props();
 
-	const PAD = { l: 46, r: 14, t: 10, b: 24 };
+	const PAD = { l: 50, r: 14, t: 12, b: 24 };
 	let w = $state(640);
 	let cursor = $state<{ px: number; py: number } | null>(null);
 
@@ -107,7 +107,7 @@
 		return rows.length ? { t, x: px(t), rows } : null;
 	});
 
-	let tipX = $derived(hover ? Math.min(hover.x + 10, w - 130) : 0);
+	let tipX = $derived(hover ? Math.min(hover.x + 10, w - 142) : 0);
 
 	function onmove(ev: PointerEvent) {
 		const rect = (ev.currentTarget as SVGElement).getBoundingClientRect();
@@ -141,10 +141,10 @@
 	>
 		{#each yTicks as tk}
 			<line x1={PAD.l} x2={w - PAD.r} y1={tk.y} y2={tk.y} stroke="var(--grid)" stroke-width="1" />
-			<text x={PAD.l - 6} y={tk.y + 3.5} text-anchor="end" font-size="10" fill="var(--muted)" class="num">{fmt(tk.v)}</text>
+			<text x={PAD.l - 6} y={tk.y + 3.5} text-anchor="end" font-size="12" fill="var(--muted)" class="num">{fmt(tk.v)}</text>
 		{/each}
 		{#each xTicks as tk}
-			<text x={tk.x} y={height - 8} text-anchor="middle" font-size="10" fill="var(--muted)" class="num">{fmtClock(tk.t)}</text>
+			<text x={tk.x} y={height - 8} text-anchor="middle" font-size="12" fill="var(--muted)" class="num">{fmtClock(tk.t)}</text>
 		{/each}
 		<line x1={PAD.l} x2={w - PAD.r} y1={height - PAD.b} y2={height - PAD.b} stroke="var(--axis)" stroke-width="1" />
 
@@ -155,11 +155,11 @@
 		{#if hover}
 			<line x1={hover.x} x2={hover.x} y1={PAD.t} y2={height - PAD.b} stroke="var(--ink-2)" stroke-width="1" stroke-dasharray="3 3" opacity="0.6" />
 			<g>
-				<rect x={tipX} y={PAD.t + 4} width="120" height={16 + hover.rows.length * 16} rx="6" fill="var(--surface-2)" stroke="var(--border)" />
-				<text x={tipX + 8} y={PAD.t + 18} font-size="10" fill="var(--muted)" class="num">{fmtClock(hover.t)}</text>
+				<rect x={tipX} y={PAD.t + 4} width="132" height={16 + hover.rows.length * 16} rx="6" fill="var(--surface-2)" stroke="var(--border)" />
+				<text x={tipX + 8} y={PAD.t + 18} font-size="12" fill="var(--muted)" class="num">{fmtClock(hover.t)}</text>
 				{#each hover.rows as r, i}
 					<circle cx={tipX + 12} cy={PAD.t + 30 + i * 16} r="3.5" fill={r.color} />
-					<text x={tipX + 20} y={PAD.t + 34 + i * 16} font-size="11" fill="var(--ink)">
+					<text x={tipX + 20} y={PAD.t + 34 + i * 16} font-size="12" fill="var(--ink)">
 						{r.name} <tspan font-weight="650" class="num">{fmt(r.v)}{unit}</tspan>
 					</text>
 				{/each}
@@ -174,7 +174,7 @@
 		gap: 16px;
 		flex-wrap: wrap;
 		margin-bottom: 6px;
-		font-size: 12px;
+		font-size: var(--font-2xs);
 		color: var(--ink-2);
 	}
 	.item {

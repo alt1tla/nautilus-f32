@@ -73,6 +73,39 @@
 		</div>
 	</div>
 
+	{#if scan.tasks?.length}
+		<!-- Tasks: the resource runs more than one program. Main leads (it
+		     owns field I/O); additional tasks compute at their own rates. -->
+		<div class="tasks">
+			<span class="label">tasks</span>
+			<table>
+				<thead>
+					<tr><th>task</th><th class="num">target</th><th class="num">last</th><th class="num">scans</th><th class="num">faults</th><th>last error</th></tr>
+				</thead>
+				<tbody>
+					<tr>
+						<td>main</td>
+						<td class="num">{fmt(scan.targetMs, 0)} ms</td>
+						<td class="num">{fmt(scan.lastMs, 2)} ms</td>
+						<td class="num">{scan.count.toLocaleString()}</td>
+						<td class="num" class:bad={scan.logicErrors > 0}>{scan.logicErrors}</td>
+						<td class="err"></td>
+					</tr>
+					{#each scan.tasks as t (t.name)}
+						<tr>
+							<td>{t.name}</td>
+							<td class="num">{fmt(t.targetMs, 0)} ms</td>
+							<td class="num">{fmt(t.lastMs, 2)} ms</td>
+							<td class="num">{t.count.toLocaleString()}</td>
+							<td class="num" class:bad={t.logicErrors > 0}>{t.logicErrors}</td>
+							<td class="err">{t.logicErrors > 0 ? (t.lastError ?? '') : ''}</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
+	{/if}
+
 	<div class="phase">
 		<span class="label">last scan phase breakdown</span>
 		<div class="bar" role="img" aria-label="phase breakdown: input read, logic execute, output write">
@@ -103,7 +136,7 @@
 	}
 	.label {
 		display: block;
-		font-size: 11px;
+		font-size: var(--font-2xs);
 		font-weight: 600;
 		letter-spacing: 0.06em;
 		text-transform: uppercase;
@@ -122,13 +155,13 @@
 		padding: 10px 12px;
 	}
 	.value {
-		font-size: 20px;
+		font-size: var(--font-lg);
 		font-weight: 650;
 		font-family: var(--mono);
 		color: var(--ink);
 	}
 	.value small {
-		font-size: 11px;
+		font-size: var(--font-2xs);
 		color: var(--muted);
 		margin-left: 2px;
 	}
@@ -165,7 +198,7 @@
 		gap: 14px;
 		align-items: center;
 		margin-top: 8px;
-		font-size: 12px;
+		font-size: var(--font-2xs);
 		color: var(--ink-2);
 	}
 	.legend i {
@@ -185,5 +218,44 @@
 	}
 	.pillbox {
 		margin-left: auto;
+	}
+	.tasks {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: var(--radius, 8px);
+		padding: 10px 12px;
+	}
+	.tasks table {
+		width: 100%;
+		border-collapse: collapse;
+		font-size: var(--font-2xs);
+	}
+	.tasks th {
+		text-align: left;
+		font-weight: 600;
+		color: var(--muted);
+		padding: 4px 8px;
+		border-bottom: 1px solid var(--border);
+	}
+	.tasks td {
+		padding: 4px 8px;
+		font-family: var(--mono);
+		color: var(--ink-2);
+		border-bottom: 1px solid var(--border);
+	}
+	.tasks tr:last-child td {
+		border-bottom: none;
+	}
+	.tasks th.num,
+	.tasks td.num {
+		text-align: right;
+	}
+	.tasks td.bad {
+		color: var(--crit, #e5484d);
+		font-weight: 700;
+	}
+	.tasks td.err {
+		color: var(--muted);
+		font-family: var(--sans, inherit);
 	}
 </style>

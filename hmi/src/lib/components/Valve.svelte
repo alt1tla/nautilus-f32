@@ -29,7 +29,7 @@
 			stroke-linecap="round"
 		/>
 	</g>
-	<text x="45" y="76" text-anchor="middle" font-size="11" font-weight="600" fill="var(--ink-2, #c3c2b7)">
+	<text x="45" y="76" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink-2, #c3c2b7)">
 		{label ? `${label} · ` : ''}{open.toFixed(0)}%
 	</text>
 </svg>

@@ -39,18 +39,22 @@
 
 <style>
 	.theme-switch {
-		display: flex;
+		/* Rigid: fixed-size options that never shrink or wrap, so a tight
+		   host layout (a header toolbar) can't scrunch the buttons. */
+		display: inline-flex;
+		flex: none;
 		gap: 2px;
 		background: var(--surface-2);
 		border-radius: 8px;
 		padding: 3px;
 	}
 	.opt {
-		flex: 1;
+		flex: none;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		height: 30px;
+		width: 34px;
+		height: 28px;
 		padding: 0;
 		border: none;
 		border-radius: 6px;
