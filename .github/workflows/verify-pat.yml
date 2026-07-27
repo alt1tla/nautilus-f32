@@ -1,0 +1,13 @@
+# One-off check: can the stored VSCE_PAT manage the joyauto publisher?
+# Manual trigger; prints only pass/fail — never the token.
+name: verify-pat
+on: workflow_dispatch
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx --yes @vscode/vsce verify-pat joyauto -p "$VSCE_PAT"
