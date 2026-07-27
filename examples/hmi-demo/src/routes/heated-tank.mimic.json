@@ -1,0 +1,95 @@
+{
+	"name": "Heated surge tank",
+	"canvas": { "width": 940, "height": 470 },
+	"equipment": [
+		{
+			"id": "T101",
+			"component": "Tank",
+			"x": 430,
+			"y": 40,
+			"width": 190,
+			"label": "T-101",
+			"bind": { "levelPct": "LevelPct", "tempC": "TempC", "heaterPct": "Heater" }
+		},
+		{
+			"id": "P101",
+			"component": "Pump",
+			"x": 150,
+			"y": 330,
+			"width": 110,
+			"label": "P-101",
+			"bind": { "running": "PumpRun" }
+		},
+		{
+			"id": "TIC101",
+			"component": "Gauge",
+			"x": 690,
+			"y": 60,
+			"width": 160,
+			"label": "TIC-101",
+			"props": { "min": 0, "max": 110, "unit": "°C" },
+			"bind": { "value": "TempC", "setpoint": "TempSP" }
+		},
+		{
+			"id": "E101",
+			"component": "HeatExchanger",
+			"x": 680,
+			"y": 210,
+			"width": 160,
+			"label": "E-101",
+			"bind": { "active": "PumpRun" },
+			"ports": [
+				{ "name": "shellIn", "x": 0.5, "y": 0 },
+				{ "name": "tubeIn", "x": 0, "y": 0.5 },
+				{ "name": "tubeOut", "x": 1, "y": 0.5 },
+				{ "name": "shellOut", "x": 0.5, "y": 1 }
+			]
+		}
+	],
+	"pipes": [
+		{
+			"id": "suction",
+			"points": [[40, 385]],
+			"to": { "equip": "P101", "port": "in" },
+			"bind": { "flowing": "PumpRun" }
+		},
+		{
+			"id": "discharge",
+			"points": [[380, 120], [435, 120]],
+			"routing": "orthogonal",
+			"from": { "equip": "P101", "port": "out" },
+			"bind": { "flowing": "PumpRun" }
+		},
+		{
+			"id": "demand",
+			"points": [[618, 260], [680, 260]],
+			"props": { "flowing": true, "rate": 0.5 },
+			"color": "var(--s2, #d99a27)"
+		},
+		{
+			"id": "demand-out",
+			"points": [[840, 260], [840, 385], [870, 385]],
+			"props": { "flowing": true, "rate": 0.5 },
+			"color": "var(--s2, #d99a27)"
+		},
+		{
+			"id": "coolant-in",
+			"points": [[900, 150], [900, 210]],
+			"to": { "equip": "E101", "port": "shellIn" },
+			"color": "var(--s3, #199e70)",
+			"props": { "flowing": true, "rate": 0.35 }
+		},
+		{
+			"id": "coolant-out",
+			"points": [[760, 310], [760, 362]],
+			"props": { "flowing": true, "rate": 0.35 },
+			"color": "var(--s3, #199e70)"
+		}
+	],
+	"labels": [
+		{ "text": "city feed", "x": 38, "y": 360 },
+		{ "text": "to zone 13 demand", "x": 774, "y": 405 },
+		{ "text": "coolant in", "x": 862, "y": 140 },
+		{ "text": "coolant out", "x": 698, "y": 378 }
+	]
+}

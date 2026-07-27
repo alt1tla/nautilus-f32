@@ -1,0 +1,47 @@
+/* Token bridge: the hmi kit components consume the HMI theme tokens
+   (--surface, --ink, --good, …); in the webview we remap every one of them
+   onto the --nx-* layer (which itself resolves to VS Code theme vars), so
+   equipment on the editor canvas follows the editor theme. Declared once,
+   here — kit components never see a raw --vscode-* var. */
+:root {
+	--bg: var(--nx-bg);
+	--surface: var(--nx-panel-bg);
+	--surface-2: var(--nx-input-bg);
+	--border: var(--nx-border);
+	--ink: var(--nx-ink);
+	--ink-2: var(--nx-ui-ink);
+	--muted: var(--nx-muted);
+	--font: var(--nx-font);
+	--mono: var(--nx-mono);
+	--accent: var(--nx-accent);
+	--s1: var(--nx-blue);
+	--s2: var(--vscode-charts-orange, #d99a27);
+	--s3: var(--vscode-charts-purple, #bc8cff);
+	--s5: var(--vscode-charts-green, #64d88a);
+	--good: var(--nx-ok);
+	--warn: var(--nx-warn);
+	--serious: var(--nx-warn);
+	--crit: var(--nx-err);
+	--grid: color-mix(in srgb, var(--nx-ink) 7%, transparent);
+	--axis: var(--nx-muted);
+	--hover: var(--nx-hover);
+	--radius: 8px;
+	--primary-bg: var(--nx-btn-bg);
+	--primary-border: transparent;
+	--primary-hover: var(--nx-btn-bg);
+}
+
+html,
+body,
+#app {
+	height: 100%;
+	margin: 0;
+	padding: 0;
+}
+body {
+	background: var(--nx-bg);
+	color: var(--nx-ui-ink);
+	font-family: var(--nx-font);
+	font-size: 13px;
+	overflow: hidden;
+}

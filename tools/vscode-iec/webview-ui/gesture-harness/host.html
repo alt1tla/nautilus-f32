@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<!-- Host page for the gesture harness. Stands in for the extension's
+		     webview shell (src/mimicEditor.ts): stamps data-mimic-mode, mounts
+		     #app, loads the PRODUCTION mimic-editor bundle unmodified, and
+		     performs the host side of the message protocol. NO CSP here (the
+		     real webview has one, but it only blocks external hosts — the
+		     bundle is self-contained, so its behavior is identical) and NO
+		     acquireVsCodeApi, so vscodeApi.ts's fallback captures every posted
+		     op on window.__POSTED__ for the driver to assert on.
+
+		     The __harness helpers below only READ the DOM the bundle renders —
+		     they never touch its internals — so what they observe is exactly
+		     what a user's eyes and a real click would land on. -->
+		<title>mimic gesture harness</title>
+		<link rel="stylesheet" href="./mimic-editor.css" />
+		<style>
+			html, body { margin: 0; height: 100%; }
+			#app { height: 100vh; }
+		</style>
+	</head>
+	<body data-mimic-mode="mimic">
+		<div id="app"></div>
+		<script>
+			window.__POSTED__ = [];
+			// Deliver a host->webview message (doc, manifest, tags, config).
+			window.__deliver = (msg) => window.postMessage(msg, '*');
+			// Ops the webview posted back (mimicReady, mimicOp, manifestOp...).
+			window.__posted = () => window.__POSTED__;
+			window.__ops = () => window.__POSTED__.filter((m) => m && m.type === 'mimicOp').map((m) => m.op);
+			window.__reset = () => { window.__POSTED__.length = 0; };
+
+			const vpCenter = (el) => {
+				const r = el.getBoundingClientRect();
+				return { cx: r.left + r.width / 2, cy: r.top + r.height / 2, w: r.width, h: r.height, left: r.left, top: r.top };
+			};
+
+			// Every rendered port dot (.port circles show only in pipe mode),
+			// with its name (from the <title>) and viewport center. Ordering is
+			// doc.equipment order then that equipment's port order.
+			window.__ports = () =>
+				Array.from(document.querySelectorAll('circle.port')).map((c) => {
+					const t = c.querySelector('title')?.textContent ?? '';
+					return { name: t.split('·')[0].trim(), title: t, ...vpCenter(c) };
+				});
+
+			// Equipment box rects (doc.equipment order) — used to disambiguate
+			// two ports that share a name (e.g. two Tanks' "left").
+			window.__eqRects = () => Array.from(document.querySelectorAll('.eq')).map(vpCenter);
+
+			// Ports-EDIT-mode dots (.porthandle — distinct from the pipe-mode
+			// .port circles above; renders only while ed.portsEdit targets an
+			// equipment). Its <title> is "name · fx, fy[ · exits dir]"
+			// (EditorCanvas.svelte); parsed out here so the driver can read a
+			// port's current fraction straight off the DOM.
+			window.__portHandles = () =>
+				Array.from(document.querySelectorAll('circle.porthandle')).map((c) => {
+					const t = c.querySelector('title')?.textContent ?? '';
+					const parts = t.split(' · ');
+					const [fx, fy] = (parts[1] ?? '').split(',').map((s) => parseFloat(s));
+					return { name: parts[0] ?? '', fx, fy, title: t, ...vpCenter(c) };
+				});
+
+			// Toolbar buttons (Select / +Pipe / +Label), in order.
+			window.__tools = () =>
+				Array.from(document.querySelectorAll('.tools button')).map((b) => ({ label: b.textContent.trim(), ...vpCenter(b) }));
+
+			// The in-flight draw draft: the rubber-band path's `d` and the count
+			// of committed draft points (.draftpt circles, anchors flagged).
+			window.__draft = () => {
+				const path = document.querySelector('path.draft');
+				const pts = Array.from(document.querySelectorAll('circle.draftpt'));
+				return {
+					d: path?.getAttribute('d') ?? null,
+					count: pts.length,
+					anchors: pts.map((p) => p.classList.contains('anchor'))
+				};
+			};
+
+			// Rendered pipe geometry: the routed path `d` for each pipe (read off
+			// the transparent .hit path, which carries the SAME routed `d` the
+			// visible Pipe does). This is the COMMITTED geometry — compared
+			// against the live drag preview to catch preview/commit divergence.
+			window.__pipePaths = () =>
+				Array.from(document.querySelectorAll('.piperun .hit')).map((p) => p.getAttribute('d'));
+
+			// A selected pipe's vertex handles (pipeHandlePoints space), viewport
+			// centers — for driving vertex/terminal drags.
+			window.__vtx = () =>
+				Array.from(document.querySelectorAll('.pipe-handles circle.vtx')).map((c, i) => ({ i, ...vpCenter(c) }));
+
+			// Read-only summary of ed.selection's KIND — inferred from the same
+			// `.sel` classes EditorCanvas.svelte itself renders (never touches
+			// the app's internals), so it's exactly what a user's eyes would
+			// see highlighted. `nodesCount` is `.vtx.sel`'s length — a node
+			// multi-selection's cardinality — the piece of state BUG 1's
+			// regression coverage needs (did a shift-click actually add/remove
+			// from the selection, independent of what a stray dblclick may have
+			// mutated on the pipe itself). 'pipe' covers both a whole-pipe and
+			// an 'end' (terminal handle) selection — the two aren't
+			// distinguishable by CSS class alone (see EditorCanvas's `selected()`)
+			// and no test here needs to tell them apart.
+			window.__selection = () => {
+				const nodesCount = document.querySelectorAll('.vtx.sel').length;
+				if (nodesCount > 0) return { kind: 'nodes', nodesCount };
+				if (document.querySelectorAll('.piperun.sel').length) return { kind: 'pipe' };
+				if (document.querySelectorAll('.eq.sel').length) return { kind: 'equipment' };
+				if (document.querySelectorAll('.lbl.sel').length) return { kind: 'label' };
+				return { kind: 'none' };
+			};
+
+			// Canvas coord <-> viewport mapping. The .canvas is `transform:
+			// scale(S)`, origin top-left; its getBoundingClientRect already
+			// includes S, so scale = rect.width / offsetWidth (offset* is the
+			// unscaled canvas size). Lets the driver aim clicks/drags at exact
+			// canvas coordinates.
+			window.__canvas = () => {
+				const el = document.querySelector('.canvas');
+				if (!el) return null;
+				const r = el.getBoundingClientRect();
+				return { left: r.left, top: r.top, scale: r.width / el.offsetWidth };
+			};
+			window.__toVp = (cx, cy) => {
+				const c = window.__canvas();
+				return c ? [c.left + cx * c.scale, c.top + cy * c.scale] : null;
+			};
+
+			window.__ready = () => !!document.querySelector('.tools button') && !!document.querySelector('.canvas');
+		</script>
+		<script src="./mimic-editor.js"></script>
+	</body>
+</html>

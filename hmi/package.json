@@ -17,6 +17,11 @@
       "svelte": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./mimic": {
+      "types": "./dist/mimic.d.ts",
+      "svelte": "./dist/mimic.js",
+      "default": "./dist/mimic.js"
+    },
     "./theme.css": "./dist/theme.css"
   },
   "files": [

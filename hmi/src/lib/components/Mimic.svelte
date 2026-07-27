@@ -1,0 +1,219 @@
+<script lang="ts">
+	// Renders a MimicDoc live: an SVG underlay of pipe runs, kit components
+	// absolutely placed above it, all scaled to the container width. Feed it
+	// `frame.tags` and the bindings animate with the process. Pass extra
+	// components through `registry` to place your own equipment — the
+	// built-ins are an easy button, not a wall.
+	import type { Component } from 'svelte';
+	import Tank from './Tank.svelte';
+	import Pump from './Pump.svelte';
+	import Valve from './Valve.svelte';
+	import Gauge from './Gauge.svelte';
+	import Sparkline from './Sparkline.svelte';
+	import Pipe from './Pipe.svelte';
+	import { makeGetPort, pointsToPath, resolveBindings, resolveRuntimePorts, routedPoints } from '../mimic.js';
+	import type { EquipmentBox, MimicDoc, MimicEquipment } from '../mimic.js';
+
+	let {
+		doc,
+		tags = {},
+		registry = {},
+		onequipmentclick
+	}: {
+		doc: MimicDoc;
+		tags?: Record<string, unknown>;
+		/** Extra/override components addressable from equipment[].component. */
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		registry?: Record<string, Component<any>>;
+		/** Present = equipment is clickable (open a faceplate, navigate…). */
+		onequipmentclick?: (eq: MimicEquipment) => void;
+	} = $props();
+
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	const builtin: Record<string, Component<any>> = { Tank, Pump, Valve, Gauge, Sparkline };
+	const components = $derived({ ...builtin, ...registry });
+
+	// Scale the logical canvas to the container width (height follows).
+	let host = $state<HTMLDivElement | null>(null);
+	let scale = $state(1);
+	$effect(() => {
+		if (!host) return;
+		const el = host;
+		const update = () => (scale = el.clientWidth / doc.canvas.width);
+		update();
+		const ro = new ResizeObserver(update);
+		ro.observe(el);
+		return () => ro.disconnect();
+	});
+
+	const eqProps = (eq: MimicEquipment): Record<string, unknown> => ({
+		...(eq.width !== undefined ? { width: eq.width } : {}),
+		...(eq.label !== undefined ? { label: eq.label } : {}),
+		...(eq.props ?? {}),
+		...resolveBindings(eq.bind, tags)
+	});
+
+	// ── pipe end anchors (MimicPipe.from/to) ─────────────────────────────────
+	// Anchored pipe ends resolve against an equipment's ACTUAL rendered box —
+	// same DOM-measured approach as the mimic editor's EditorCanvas.svelte
+	// (eqBox()/eqEls) so an anchor lands identically here and there. Equipment
+	// carries no intrinsic size of its own (only an optional `width`), so
+	// there's no way to compute this from the doc alone.
+	const eqEls = new Map<string, HTMLElement>();
+	/** Bumped by each equipment's own ResizeObserver — read (not written) by
+	 * pipePaths below purely to force it to recompute after layout settles
+	 * (first paint, a component's size changing with its bound props, …). */
+	let boxVersion = $state(0);
+	function regEl(node: HTMLElement, id: string) {
+		eqEls.set(id, node);
+		const ro = new ResizeObserver(() => boxVersion++);
+		ro.observe(node);
+		return {
+			update(next: string) {
+				eqEls.delete(id);
+				id = next;
+				eqEls.set(id, node);
+			},
+			destroy() {
+				eqEls.delete(id);
+				ro.disconnect();
+			}
+		};
+	}
+	function eqBox(eq: MimicEquipment): EquipmentBox {
+		const el = eqEls.get(eq.id);
+		return { x: eq.x, y: eq.y, w: el?.offsetWidth || eq.width || 100, h: el?.offsetHeight || 80 };
+	}
+	function findEq(id: string): MimicEquipment | undefined {
+		return (doc.equipment ?? []).find((e) => e.id === id);
+	}
+	const getPort = makeGetPort(
+		(id) => {
+			const eq = findEq(id);
+			return eq ? eqBox(eq) : undefined;
+		},
+		(id) => {
+			const eq = findEq(id);
+			return eq ? resolveRuntimePorts(eq) : undefined;
+		}
+	);
+	/** One routed path per pipe — recomputed whenever the doc changes OR any
+	 * equipment's measured box changes (moving/resizing an anchored end's
+	 * equipment must move the pipe with it, with no explicit wiring beyond
+	 * this dependency: routedPoints() re-derives the anchor's position from
+	 * the fresh box on every call). */
+	const pipePaths = $derived.by(() => {
+		void boxVersion;
+		return (doc.pipes ?? []).map((p) => ({ pipe: p, d: pointsToPath(routedPoints(p, getPort)) }));
+	});
+</script>
+
+<div class="mimic" bind:this={host} style="height: {doc.canvas.height * scale}px">
+	<div
+		class="canvas"
+		style="width: {doc.canvas.width}px; height: {doc.canvas.height}px; transform: scale({scale})"
+	>
+		<svg
+			class="pipes"
+			width={doc.canvas.width}
+			height={doc.canvas.height}
+			viewBox="0 0 {doc.canvas.width} {doc.canvas.height}"
+			aria-hidden="true"
+		>
+			{#each pipePaths as { pipe: p, d } (p.id)}
+				<Pipe
+					{d}
+					{...(p.color !== undefined ? { color: p.color } : {})}
+					{...(p.props ?? {})}
+					{...resolveBindings(p.bind, tags)}
+				/>
+			{/each}
+		</svg>
+
+		{#each doc.equipment ?? [] as eq (eq.id)}
+			{@const C = components[eq.component]}
+			{#if onequipmentclick}
+				<button
+					type="button"
+					class="eq clickable"
+					style="left: {eq.x}px; top: {eq.y}px"
+					aria-label={eq.label ?? eq.id}
+					use:regEl={eq.id}
+					onclick={() => onequipmentclick(eq)}
+				>
+					{#if C}<C {...eqProps(eq)} />{:else}<span class="unknown">{eq.component}?</span>{/if}
+				</button>
+			{:else}
+				<div class="eq" style="left: {eq.x}px; top: {eq.y}px" use:regEl={eq.id}>
+					{#if C}<C {...eqProps(eq)} />{:else}<span class="unknown">{eq.component}?</span>{/if}
+				</div>
+			{/if}
+		{/each}
+
+		{#each doc.labels ?? [] as l, i (i)}
+			<span class="lbl" style="left: {l.x}px; top: {l.y}px">{l.text}</span>
+		{/each}
+	</div>
+</div>
+
+<style>
+	.mimic {
+		position: relative;
+		/* Geometry is never clamped to the canvas rect (see EditorCanvas.svelte
+		   for the editor-side twin of this comment) — a doc can legitimately
+		   have pipe points or equipment sitting past the edge mid-edit.
+		   Clipping is the render-side backstop so a shipped HMI never shows a
+		   stray fragment outside its frame. inset(-4px) leaves a hair of
+		   room so a round pipe cap landing exactly on the boundary isn't cut
+		   in half — anything further out still gets clipped. */
+		clip-path: inset(-4px);
+	}
+	.canvas {
+		position: absolute;
+		top: 0;
+		left: 0;
+		transform-origin: top left;
+	}
+	.pipes {
+		position: absolute;
+		inset: 0;
+		overflow: hidden;
+	}
+	.eq {
+		position: absolute;
+		margin: 0;
+		padding: 0;
+		border: none;
+		background: none;
+		color: inherit;
+		font: inherit;
+		text-align: inherit;
+	}
+	.eq.clickable {
+		cursor: pointer;
+		border-radius: 8px;
+	}
+	.eq.clickable:hover {
+		outline: 2px solid var(--s1, #3987e5);
+		outline-offset: 2px;
+	}
+	.eq.clickable:focus-visible {
+		outline: 2px solid var(--s1, #3987e5);
+		outline-offset: 2px;
+	}
+	.unknown {
+		display: inline-block;
+		padding: 4px 8px;
+		border: 1px dashed var(--crit, #e5484d);
+		border-radius: 6px;
+		color: var(--crit, #e5484d);
+		font-size: var(--font-2xs);
+		font-family: var(--mono, monospace);
+	}
+	.lbl {
+		position: absolute;
+		font-size: var(--font-2xs);
+		color: var(--muted, #8b949e);
+		white-space: nowrap;
+	}
+</style>
