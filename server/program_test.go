@@ -7,6 +7,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	nio "github.com/joyautomation/nautilus/io"
+	"github.com/joyautomation/nautilus/runtime"
 )
 
 const editedProgram = `PROGRAM Test
@@ -33,6 +37,80 @@ func doJSON(t *testing.T, h http.Handler, method, path string, body any) (*httpt
 	out := map[string]any{}
 	_ = json.Unmarshal(w.Body.Bytes(), &out)
 	return w, out
+}
+
+// Task programs are addressed by POU name: a PUT routes automatically by
+// the submitted source's PROGRAM name, GET/rollback take ?pou= / ?task=.
+func TestProgramTaskRouting(t *testing.T) {
+	drv := nio.NewMemory()
+	rt, err := runtime.New(runtime.Options{
+		Program: testProgram, // PROGRAM Test
+		Driver:  drv,
+		Seed:    nio.Values{"Level": 40.0, "SP": 65.0, "Out": 0.0, "TotalL": 0.0},
+		Tasks: []runtime.Task{{
+			Name: "totals",
+			Program: `PROGRAM Totals
+VAR_EXTERNAL Out : REAL; TotalL : REAL; END_VAR
+TotalL := TotalL + Out;
+END_PROGRAM`,
+			Scan: time.Second,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(rt, Options{OnlineEdits: true}).Handler()
+
+	// The directory lists every program with its POU.
+	w, body := doJSON(t, h, "GET", "/api/program", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET = %d", w.Code)
+	}
+	progs, _ := body["programs"].([]any)
+	if len(progs) != 2 {
+		t.Fatalf("directory should list 2 programs, got %v", body["programs"])
+	}
+
+	// ?pou= selects the task's program.
+	w, body = doJSON(t, h, "GET", "/api/program?pou=Totals", nil)
+	if w.Code != http.StatusOK || body["task"] != "totals" || body["pou"] != "Totals" {
+		t.Fatalf("GET ?pou=Totals = %d %v", w.Code, body)
+	}
+	w, _ = doJSON(t, h, "GET", "/api/program?pou=Nope", nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unknown pou = %d, want 404", w.Code)
+	}
+
+	// A PUT with the task's POU routes to the task, not main.
+	edited := `PROGRAM Totals
+VAR_EXTERNAL Out : REAL; TotalL : REAL; END_VAR
+TotalL := TotalL + Out * 2.0;
+END_PROGRAM`
+	w, body = doJSON(t, h, "PUT", "/api/program", map[string]string{"source": edited})
+	if w.Code != http.StatusOK || body["task"] != "totals" {
+		t.Fatalf("PUT by POU = %d %v, want task totals", w.Code, body)
+	}
+	if src := rt.TaskProgram("totals").Source(); !strings.Contains(src, "* 2.0") {
+		t.Fatalf("task program not swapped:\n%s", src)
+	}
+	if src := rt.Program().Source(); strings.Contains(src, "* 2.0") {
+		t.Fatal("main program must be untouched")
+	}
+
+	// With tasks present, an unknown POU must NOT silently retarget main.
+	w, _ = doJSON(t, h, "PUT", "/api/program", map[string]string{"source": "PROGRAM Ghost\nEND_PROGRAM"})
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unknown POU with tasks = %d, want 404", w.Code)
+	}
+
+	// Rollback per program.
+	w, _ = doJSON(t, h, "POST", "/api/program/rollback?pou=Totals", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("rollback ?pou= = %d", w.Code)
+	}
+	if src := rt.TaskProgram("totals").Source(); strings.Contains(src, "* 2.0") {
+		t.Fatal("task rollback did not restore the prior source")
+	}
 }
 
 func TestProgramEndpointsGated(t *testing.T) {

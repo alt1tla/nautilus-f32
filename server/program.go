@@ -7,21 +7,30 @@ import (
 	"github.com/joyautomation/nautilus/runtime"
 )
 
-// Program endpoints — PLC-style online edits over HTTP.
+// Program endpoints — PLC-style online edits over HTTP, for EVERY program
+// in the resource (the main task and each additional task).
 //
 //	GET  /api/program           what's running: source, hash, dirty, status
 //	PUT  /api/program           compile + warm-swap new source (gated)
 //	POST /api/program/rollback  one-step stateful undo of the last swap (gated)
 //
+// Programs are addressed by POU name — `PROGRAM <Name>` is a program's
+// identity. GET/rollback take `?pou=<name>` (or `?task=<taskName>`); a PUT
+// routes automatically by the POU name in the submitted source, so an
+// editor downloads any program file and the right task picks it up. No
+// selector = the main task, which keeps the single-program API unchanged.
+//
 // The gate is Options.OnlineEdits; writes additionally honor AuthToken via
 // the same authorizeWrite path as tag writes. Edits are ephemeral: a restart
-// boots the binary's embedded program, so committing the source to git is
+// boots the binary's embedded programs, so committing the source to git is
 // the only way an edit becomes permanent.
 
 // programInfo is the GET /api/program response. Source is the ORIGINAL
 // program source — for an FBD controller that's the .fbd netlist, so a
 // workspace file diffs 1:1 against it; Language says which ("st" | "fbd").
 type programInfo struct {
+	Task        string `json:"task"` // task name; "main" for the main task
+	POU         string `json:"pou"`  // `PROGRAM <Name>` — the edit-routing identity
 	Source      string `json:"source"`
 	Language    string `json:"language"`
 	Hash        string `json:"hash"`
@@ -31,12 +40,54 @@ type programInfo struct {
 	CompiledAt  int64  `json:"compiledAt"`
 	Scans       uint64 `json:"scans"`
 	Error       string `json:"error,omitempty"`
+	// Every program in the resource, source omitted — the directory an
+	// editor uses to discover what's addressable.
+	Programs []programSummary `json:"programs,omitempty"`
+}
+
+// programSummary is one resource program in the GET directory.
+type programSummary struct {
+	Task        string `json:"task"`
+	POU         string `json:"pou"`
+	Language    string `json:"language"`
+	Hash        string `json:"hash"`
+	Dirty       bool   `json:"dirty"`
+	CanRollback bool   `json:"canRollback"`
+	Scans       uint64 `json:"scans"`
+	Error       string `json:"error,omitempty"`
+}
+
+// selectProgram resolves ?task= / ?pou= to a program; no selector = main.
+func (s *Server) selectProgram(r *http.Request) (*runtime.Program, string, string) {
+	if task := r.URL.Query().Get("task"); task != "" {
+		if p := s.rt.TaskProgram(task); p != nil {
+			name := task
+			if p == s.rt.Program() {
+				name = runtime.MainTaskName
+			}
+			return p, name, ""
+		}
+		return nil, "", "no task named " + task
+	}
+	if pou := r.URL.Query().Get("pou"); pou != "" {
+		if p, task := s.rt.ProgramByPOU(pou); p != nil {
+			return p, task, ""
+		}
+		return nil, "", "no program named " + pou
+	}
+	return s.rt.Program(), runtime.MainTaskName, ""
 }
 
 func (s *Server) handleGetProgram(w http.ResponseWriter, r *http.Request) {
-	p := s.rt.Program()
+	p, task, errMsg := s.selectProgram(r)
+	if p == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": errMsg})
+		return
+	}
 	st := p.Status()
-	writeJSON(w, http.StatusOK, programInfo{
+	info := programInfo{
+		Task:        task,
+		POU:         p.POU(),
 		Source:      p.Source(),
 		Language:    runtime.Language(p.Source()),
 		Hash:        p.Hash(),
@@ -46,7 +97,23 @@ func (s *Server) handleGetProgram(w http.ResponseWriter, r *http.Request) {
 		CompiledAt:  st.CompiledAt,
 		Scans:       st.Scans,
 		Error:       st.Error,
-	})
+	}
+	names := append([]string{runtime.MainTaskName}, s.rt.TaskNames()...)
+	for _, name := range names {
+		tp := s.rt.TaskProgram(name)
+		tst := tp.Status()
+		info.Programs = append(info.Programs, programSummary{
+			Task:        name,
+			POU:         tp.POU(),
+			Language:    runtime.Language(tp.Source()),
+			Hash:        tp.Hash(),
+			Dirty:       tp.Dirty(),
+			CanRollback: tp.CanRollback(),
+			Scans:       tst.Scans,
+			Error:       tst.Error,
+		})
+	}
+	writeJSON(w, http.StatusOK, info)
 }
 
 // putProgramRequest is the PUT /api/program payload. BaseHash, when set,
@@ -67,11 +134,33 @@ func (s *Server) handlePutProgram(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "body must be {\"source\": \"...\"}"})
 		return
 	}
-	p := s.rt.Program()
+	// Route by explicit selector first, else by the POU name in the
+	// submitted source. An unmatched POU falls through to the main task
+	// only when the resource runs a single program (renaming it is a
+	// legitimate single-program edit); with tasks present that would
+	// silently retarget, so it 404s with the directory instead.
+	p, task, errMsg := s.selectProgram(r)
+	if p == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": errMsg})
+		return
+	}
+	if r.URL.Query().Get("task") == "" && r.URL.Query().Get("pou") == "" {
+		if pou := runtime.POUOf(req.Source); pou != "" {
+			if byPou, byTask := s.rt.ProgramByPOU(pou); byPou != nil {
+				p, task = byPou, byTask
+			} else if len(s.rt.TaskNames()) > 0 {
+				writeJSON(w, http.StatusNotFound, map[string]string{
+					"error": "no program named " + pou + " on this controller — its tasks are listed in GET /api/program",
+				})
+				return
+			}
+		}
+	}
 	if req.BaseHash != "" && req.BaseHash != p.Hash() {
 		writeJSON(w, http.StatusConflict, map[string]string{
 			"error": "controller program changed since your base — refresh and re-apply",
 			"hash":  p.Hash(),
+			"task":  task,
 		})
 		return
 	}
@@ -81,7 +170,10 @@ func (s *Server) handlePutProgram(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, report)
+	writeJSON(w, http.StatusOK, struct {
+		runtime.SwapReport
+		Task string `json:"task"`
+	}{report, task})
 }
 
 func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
@@ -89,7 +181,12 @@ func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, code, map[string]string{"error": msg})
 		return
 	}
-	report, err := s.rt.Program().Rollback()
+	p, _, errMsg := s.selectProgram(r)
+	if p == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": errMsg})
+		return
+	}
+	report, err := p.Rollback()
 	if err != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return

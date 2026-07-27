@@ -22,7 +22,14 @@ Usage:
                           VS Code extension; not meant to be run by hand).
   nautilus check [path]   Compile every .st file under path (default ".")
                           and print diagnostics. Exits 1 on any error.
-  nautilus new [name]     Scaffold a new nautilus project.
+  nautilus new [name]     Scaffold a new nautilus project (--no-go for a
+                          manifest project: nautilus.yaml + IEC files, no Go;
+                          --language st|fbd|ld picks the program language).
+  nautilus run [dir]      Run a manifest project (nautilus.yaml + programs):
+                          scan loop, dashboard, and tag API — no Go needed.
+  nautilus build [dir]    Emit a self-contained controller binary from a
+                          manifest project (-o name). Ships like any compiled
+                          program; no Go toolchain involved.
   nautilus eip <cmd>      EtherNet/IP tools: import (browse a Logix controller
                           and generate types + tag manifest) and browse.
   nautilus pull           Pull a controller's online edits back into the
@@ -30,10 +37,18 @@ Usage:
                           VS Code "Download Program to Controller" command.
   nautilus fbd graph <f>  Emit a .fbd file's diagram render model as JSON
                           (used by the VS Code FBD preview).
+  nautilus sfc check <f>  Parse a .sfc file and run its structural checks
+                          (early — see "nautilus sfc" for details).
   nautilus version        Print version.
 `
 
 func main() {
+	// A binary produced by `nautilus build` IS the controller: the project
+	// rides embedded on the executable's tail, and running it hosts the
+	// scan loop directly (NAUTILUS_CLI=1 recovers the CLI).
+	if fsys, ok := embeddedProject(); ok {
+		os.Exit(runProject(fsys, "built"))
+	}
 	if len(os.Args) < 2 {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
@@ -46,6 +61,10 @@ func main() {
 		}
 	case "check":
 		os.Exit(runCheck(os.Args[2:]))
+	case "run":
+		os.Exit(runRun(os.Args[2:]))
+	case "build":
+		os.Exit(runBuild(os.Args[2:]))
 	case "new":
 		os.Exit(runNew(os.Args[2:]))
 	case "eip":
@@ -54,6 +73,10 @@ func main() {
 		os.Exit(runPull(os.Args[2:]))
 	case "fbd":
 		os.Exit(runFBD(os.Args[2:]))
+	case "ld":
+		os.Exit(runLD(os.Args[2:]))
+	case "sfc":
+		os.Exit(runSFC(os.Args[2:]))
 	case "version", "--version", "-v":
 		fmt.Println("nautilus", lsp.Version)
 	case "help", "--help", "-h":

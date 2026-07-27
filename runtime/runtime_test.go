@@ -1,8 +1,11 @@
 package runtime_test
 
 import (
+	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	nio "github.com/joyautomation/nautilus/io"
 	"github.com/joyautomation/nautilus/runtime"
@@ -61,6 +64,270 @@ func TestRuntimeDrivesOutputs(t *testing.T) {
 	}
 	if n := rt.Stats().Count; n != 20 {
 		t.Fatalf("expected 20 scans, got %d", n)
+	}
+}
+
+// TagDefs declare each tag's role, seed, and HMI meta in ONE place and
+// expand into the flat Options fields — same controller, one entry per tag.
+func TestTagDefs(t *testing.T) {
+	drv := nio.NewMemory()
+	_ = drv.WriteOutputs(nio.Values{"LevelPct": 30.0, "TempC": 55.0})
+	rt, err := runtime.New(runtime.Options{
+		Program: prog, Driver: drv, DtTag: "ScanDtS",
+		Tags: []runtime.TagDef{
+			runtime.Input("LevelPct", runtime.Desc("Tank level"), runtime.Unit("%")),
+			runtime.Input("TempC", runtime.Unit("°C")),
+			runtime.Setpoint("TempSP", 65.0, runtime.Unit("°C")),
+			runtime.Setpoint("Kp", 12.0),
+			runtime.Setpoint("Ki", 0.15),
+			runtime.Setpoint("PumpStartLevel", 40.0),
+			runtime.Setpoint("PumpStopLevel", 75.0),
+			runtime.Output("PumpRun", runtime.Init(false), runtime.Desc("Pump run command")),
+			runtime.Output("Heater", runtime.Unit("%")),
+		},
+	})
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	// Init seeds exist before the first scan — the read-before-write guard.
+	if _, err := rt.Tags().ReadGlobal("PumpRun"); err != nil {
+		t.Fatalf("Init must seed the output before scan one: %v", err)
+	}
+	if v := rt.Tags().Real("TempSP"); v != 65.0 {
+		t.Fatalf("setpoint seed missing, got %v", v)
+	}
+	// Meta flowed into the HMI map.
+	if m := rt.Meta(); m["LevelPct"].Unit != "%" || m["PumpRun"].Desc == "" {
+		t.Fatalf("tag meta not expanded: %+v", m)
+	}
+
+	for i := 0; i < 20; i++ {
+		rt.Scan()
+	}
+	out, _ := drv.ReadInputs()
+	if out["PumpRun"] != true {
+		t.Fatalf("pump should start below the start level, got %v", out["PumpRun"])
+	}
+	if h, _ := out["Heater"].(float64); h <= 0 {
+		t.Fatalf("heater should drive up when cold, got %v", h)
+	}
+	if rt.Stats().LogicErrors != 0 {
+		t.Fatalf("scans must run clean, got %d logic errors", rt.Stats().LogicErrors)
+	}
+}
+
+// Libraries compose user FUNCTION_BLOCKs ahead of the program — here an
+// ST-authored FB invoked from an FBD program, the cross-language reuse
+// story: author blocks once, call them from any IEC language.
+func TestLibrariesUserFBFromFBD(t *testing.T) {
+	lib := `FUNCTION_BLOCK Hysteresis
+VAR_INPUT
+  IN : REAL;
+  HI : REAL;
+  LO : REAL;
+END_VAR
+VAR_OUTPUT
+  Q : BOOL;
+END_VAR
+IF IN >= HI THEN Q := TRUE;
+ELSIF IN <= LO THEN Q := FALSE;
+END_IF;
+END_FUNCTION_BLOCK`
+	fbdProg := `PROGRAM Main
+VAR_EXTERNAL
+  x : REAL;
+  Out : BOOL;
+END_VAR
+FBD
+  h1 : Hysteresis(IN := x, HI := 10.0, LO := 5.0)
+  Out := h1.Q
+END_FBD
+END_PROGRAM`
+
+	drv := nio.NewMemory()
+	rt, err := runtime.New(runtime.Options{
+		Program:   fbdProg,
+		Libraries: []string{lib},
+		Driver:    drv,
+		Tags: []runtime.TagDef{
+			runtime.Input("x"),
+			runtime.Output("Out", runtime.Init(false)),
+		},
+	})
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	step := func(x float64) bool {
+		_ = drv.WriteOutputs(nio.Values{"x": x})
+		rt.Scan()
+		out, _ := drv.ReadInputs()
+		b, _ := out["Out"].(bool)
+		return b
+	}
+	if step(12) != true {
+		t.Fatal("above HI must latch on")
+	}
+	if step(7) != true {
+		t.Fatal("inside the band must hold state")
+	}
+	if step(3) != false {
+		t.Fatal("below LO must drop out")
+	}
+	if rt.Stats().LogicErrors != 0 {
+		t.Fatalf("scans must run clean, got %d logic errors", rt.Stats().LogicErrors)
+	}
+}
+
+// Tasks: additional programs on their own scan rates against the shared
+// tag store — the IEC resource/task model. The main task owns field I/O;
+// a task computes on the store (here: a totalizer integrating a rate).
+func TestTasks(t *testing.T) {
+	mainProg := `PROGRAM Main
+VAR_EXTERNAL RateLps : REAL; Doubled : REAL; END_VAR
+Doubled := RateLps * 2.0;
+END_PROGRAM`
+	totalizer := `PROGRAM Totals
+VAR_EXTERNAL RateLps : REAL; TotalL : REAL; TotDtS : REAL; END_VAR
+TotalL := TotalL + RateLps * TotDtS;
+END_PROGRAM`
+
+	drv := nio.NewMemory()
+	_ = drv.WriteOutputs(nio.Values{"RateLps": 2.0})
+	rt, err := runtime.New(runtime.Options{
+		Program: mainProg,
+		Driver:  drv,
+		Tags: []runtime.TagDef{
+			runtime.Input("RateLps"),
+			runtime.Output("Doubled"),
+			runtime.State("TotalL", 0.0),
+		},
+		Tasks: []runtime.Task{
+			{Name: "totals", Program: totalizer, Scan: 500 * time.Millisecond, DtTag: "TotDtS"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+
+	rt.Scan() // main: reads RateLps, writes Doubled
+	if got := rt.Tags().Real("Doubled"); got != 4.0 {
+		t.Fatalf("main task: Doubled = %v, want 4", got)
+	}
+	// Drive the task deterministically. First scan uses its target dt.
+	if err := rt.ScanTask("totals"); err != nil {
+		t.Fatal(err)
+	}
+	if got := rt.Tags().Real("TotalL"); got != 1.0 { // 2 L/s × 0.5 s
+		t.Fatalf("task scan 1: TotalL = %v, want 1", got)
+	}
+	if err := rt.ScanTask("nope"); err == nil {
+		t.Fatal("unknown task name must error")
+	}
+
+	st := rt.Stats()
+	if len(st.Tasks) != 1 || st.Tasks[0].Name != "totals" || st.Tasks[0].Count != 1 {
+		t.Fatalf("task stats missing: %+v", st.Tasks)
+	}
+	if st.Tasks[0].LogicErrors != 0 {
+		t.Fatalf("task must scan clean: %+v", st.Tasks[0])
+	}
+
+	// A broken task program fails composition with the task named.
+	_, err = runtime.New(runtime.Options{
+		Program: mainProg,
+		Tasks:   []runtime.Task{{Name: "bad", Program: "PROGRAM x nonsense"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "task bad") {
+		t.Fatalf("bad task program must fail with its name, got %v", err)
+	}
+}
+
+// Run schedules every task concurrently; scans serialize on the shared
+// store (this test's value is mostly under -race).
+func TestTasksRunConcurrently(t *testing.T) {
+	drv := nio.NewMemory()
+	_ = drv.WriteOutputs(nio.Values{"x": 1.0})
+	rt, err := runtime.New(runtime.Options{
+		Program: `PROGRAM Main
+VAR_EXTERNAL x : REAL; y : REAL; END_VAR
+y := x + 1.0;
+END_PROGRAM`,
+		Driver: drv,
+		Scan:   2 * time.Millisecond,
+		Tags:   []runtime.TagDef{runtime.Input("x"), runtime.Output("y"), runtime.State("z", 0.0)},
+		Tasks: []runtime.Task{{
+			Name: "aux",
+			Scan: 3 * time.Millisecond,
+			Program: `PROGRAM Aux
+VAR_EXTERNAL y : REAL; z : REAL; END_VAR
+z := z + y;
+END_PROGRAM`,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	rt.Run(ctx)
+
+	st := rt.Stats()
+	if st.Count == 0 {
+		t.Fatal("main task never scanned")
+	}
+	if len(st.Tasks) != 1 || st.Tasks[0].Count == 0 {
+		t.Fatalf("aux task never scanned: %+v", st.Tasks)
+	}
+	if st.LogicErrors != 0 || st.Tasks[0].LogicErrors != 0 {
+		t.Fatalf("scans must run clean: main=%d aux=%+v", st.LogicErrors, st.Tasks[0])
+	}
+}
+
+// Ladder Diagram programs run end to end: rung text → FBD netlist → ST →
+// IR, with the original .ld source as the program of record.
+func TestLadderProgram(t *testing.T) {
+	ladder := `PROGRAM Main
+VAR_EXTERNAL
+  Start : BOOL; Stop : BOOL; Run : BOOL;
+END_VAR
+LD
+  RUNG seal
+    [ Start | Run ] /Stop ( Run )
+END_LD
+END_PROGRAM`
+
+	drv := nio.NewMemory()
+	rt, err := runtime.New(runtime.Options{
+		Program: ladder,
+		Driver:  drv,
+		Tags: []runtime.TagDef{
+			runtime.Input("Start"),
+			runtime.Input("Stop"),
+			runtime.Output("Run", runtime.Init(false)),
+		},
+	})
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	step := func(start, stop bool) bool {
+		_ = drv.WriteOutputs(nio.Values{"Start": start, "Stop": stop})
+		rt.Scan()
+		return rt.Tags().Bool("Run")
+	}
+	if step(true, false) != true {
+		t.Fatal("Start must energize the seal-in")
+	}
+	if step(false, false) != true {
+		t.Fatal("the seal must hold after Start drops")
+	}
+	if step(false, true) != false {
+		t.Fatal("Stop must drop the rung out")
+	}
+	if rt.Stats().LogicErrors != 0 {
+		t.Fatalf("scans must run clean: %d errors", rt.Stats().LogicErrors)
+	}
+	if src := rt.Program().Source(); !strings.Contains(src, "RUNG seal") {
+		t.Fatal("the ORIGINAL .ld source must be the program of record")
 	}
 }
 

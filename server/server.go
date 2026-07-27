@@ -53,11 +53,12 @@ var indexHTML []byte
 // values (a PI integral, latches, FB instances with their pins) — the watch
 // window's view inside the POU, read-only.
 type Frame struct {
-	TS     int64             `json:"ts"` // epoch milliseconds
-	Scans  uint64            `json:"scans"`
-	Tags   map[string]any    `json:"tags"`
-	Locals map[string]any    `json:"locals,omitempty"`
-	Scan   runtime.ScanStats `json:"scan"`
+	TS      int64             `json:"ts"` // epoch milliseconds
+	Scans   uint64            `json:"scans"`
+	Tags    map[string]any    `json:"tags"`
+	Locals  map[string]any    `json:"locals,omitempty"`
+	Scan    runtime.ScanStats `json:"scan"`
+	Drivers []DriverStatus    `json:"drivers,omitempty"`
 }
 
 // Options tunes the server; zero values mean defaults.
@@ -84,6 +85,44 @@ type Options struct {
 	// the program the binary embeds; committing the source is how an edit
 	// becomes permanent. Program writes honor AuthToken like tag writes.
 	OnlineEdits bool
+
+	// Drivers, if set, is polled for field-driver / publisher status and
+	// served at GET /api/drivers (and included in each stream frame). It
+	// keeps the server package free of any specific driver dependency —
+	// the runner adapts eip.Health / sparkplug.Status into DriverStatus.
+	Drivers func() []DriverStatus
+}
+
+// DriverStatus is a field driver's or publisher's health, rendered by the
+// HMI's driver-status components. The envelope is generic; Metrics and
+// Extra carry the protocol-specific detail without the server needing to
+// know the protocol.
+type DriverStatus struct {
+	Kind      string         `json:"kind"`    // "ethernet-ip" | "sparkplug"
+	Name      string         `json:"name"`    // display name (host, or group/node)
+	Detail    string         `json:"detail"`  // one-line address/target
+	State     string         `json:"state"`   // connected|connecting|waiting|degraded|error|offline
+	Message   string         `json:"message"` // human sentence for the current state
+	SinceMs   int64          `json:"sinceMs"` // epoch ms the current state began (0 = unknown)
+	LastError string         `json:"lastError,omitempty"`
+	Metrics   []DriverMetric `json:"metrics,omitempty"` // labeled scalar readouts
+	Devices   []DriverDevice `json:"devices,omitempty"` // sub-devices (Sparkplug devices, etc.)
+	Extra     map[string]any `json:"extra,omitempty"`   // protocol-specific structured fields
+}
+
+// DriverMetric is one labeled readout on a status card (poll rate, msgs, …).
+type DriverMetric struct {
+	Label string  `json:"label"`
+	Value float64 `json:"value"`
+	Unit  string  `json:"unit,omitempty"`
+	Text  string  `json:"text,omitempty"` // set for non-numeric values (overrides Value)
+}
+
+// DriverDevice is one sub-device under a driver (a Sparkplug device).
+type DriverDevice struct {
+	ID     string `json:"id"`
+	Online bool   `json:"online"`
+	Detail string `json:"detail,omitempty"`
 }
 
 // Server fans runtime frames out to SSE clients and answers snapshot reads.
@@ -92,6 +131,7 @@ type Server struct {
 	interval    time.Duration
 	authToken   string
 	onlineEdits bool
+	drivers     func() []DriverStatus
 
 	mu      sync.Mutex
 	clients map[chan []byte]struct{}
@@ -109,13 +149,17 @@ func New(rt *runtime.Runtime, opts ...Options) *Server {
 		token = opts[0].AuthToken
 		onlineEdits = opts[0].OnlineEdits
 	}
-	return &Server{
+	s := &Server{
 		rt:          rt,
 		interval:    interval,
 		authToken:   token,
 		onlineEdits: onlineEdits,
 		clients:     map[chan []byte]struct{}{},
 	}
+	if len(opts) > 0 {
+		s.drivers = opts[0].Drivers
+	}
+	return s
 }
 
 // Run drives the SSE broadcast loop until ctx is cancelled. Without it the
@@ -156,13 +200,17 @@ func (s *Server) broadcast() {
 
 func (s *Server) frame() Frame {
 	stats := s.rt.Stats()
-	return Frame{
+	f := Frame{
 		TS:     time.Now().UnixMilli(),
 		Scans:  stats.Count,
 		Tags:   s.rt.Tags().All(),
-		Locals: s.rt.Program().Locals(),
+		Locals: s.rt.AllLocals(),
 		Scan:   stats,
 	}
+	if s.drivers != nil {
+		f.Drivers = s.drivers()
+	}
+	return f
 }
 
 // Handler returns the API routes. Mount it directly or under your own mux.
@@ -170,6 +218,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/state", s.handleState)
 	mux.HandleFunc("GET /api/meta", s.handleMeta)
+	mux.HandleFunc("GET /api/drivers", s.handleDrivers)
 	mux.HandleFunc("GET /api/stream", s.handleStream)
 	mux.HandleFunc("POST /api/tags", s.handleWriteTag)
 	mux.HandleFunc("GET /api/program", s.handleGetProgram)
@@ -215,6 +264,20 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(s.frame())
 }
 
+// handleDrivers serves the current field-driver / publisher status list.
+// Empty (but 200) when no Drivers provider is configured.
+func (s *Server) handleDrivers(w http.ResponseWriter, r *http.Request) {
+	var out []DriverStatus
+	if s.drivers != nil {
+		out = s.drivers()
+	}
+	if out == nil {
+		out = []DriverStatus{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
 // metaResponse is the static tag documentation for an HMI: descriptions and
 // units (runtime.Options.Meta) plus which tags are driver-bound. A tag table
 // derives quality from this + the frame: an input while the scan reports
@@ -256,6 +319,11 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	// Tell buffering reverse proxies (nginx, some ingress controllers) not to
+	// hold the response — an SSE stream never "finishes", so a proxy that
+	// waits for EOF starves the client. Doesn't affect a direct connection;
+	// a client-side inspecting proxy/extension can still buffer regardless.
+	w.Header().Set("X-Accel-Buffering", "no")
 
 	ch := make(chan []byte, 8)
 	s.mu.Lock()

@@ -2,12 +2,15 @@ package lsp
 
 import (
 	"errors"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/joyautomation/nautilus/lang/fbd"
 	"github.com/joyautomation/nautilus/lang/ir"
+	"github.com/joyautomation/nautilus/lang/ld"
+	"github.com/joyautomation/nautilus/lang/sfc"
 	"github.com/joyautomation/nautilus/lang/st"
 )
 
@@ -122,6 +125,44 @@ func analyze(text, prelude string, preludeLines int) analysis {
 	return a
 }
 
+// analyzeLD compiles a Ladder Diagram document: LD → FBD netlist → the FBD
+// analysis, with the extra line map composed so diagnostics land on the
+// offending RUNG in the .ld source.
+func analyzeLD(text, prelude string, preludeLines int) analysis {
+	fbdText, ldMap, err := ld.TranspileWithLines(text)
+	if err != nil {
+		var a analysis
+		a.Diags = append(a.Diags, Diagnostic{
+			Range:    lineRange(text, ldErrLine(err)),
+			Severity: SeverityError,
+			Source:   "nautilus-ld",
+			Message:  err.Error(),
+		})
+		return a
+	}
+	a := analyzeFBD(fbdText, prelude, preludeLines)
+	for i := range a.Diags {
+		orig := 1
+		if l := a.Diags[i].Range.Start.Line; l >= 0 && l < len(ldMap) {
+			orig = ldMap[l]
+		}
+		a.Diags[i].Range = lineRange(text, orig)
+	}
+	return a
+}
+
+// ldErrLine extracts the "line N" a lang/ld error reports, 1 if none.
+var ldLineRe = regexp.MustCompile(`line (\d+)`)
+
+func ldErrLine(err error) int {
+	if m := ldLineRe.FindStringSubmatch(err.Error()); m != nil {
+		if n, e := strconv.Atoi(m[1]); e == nil {
+			return n
+		}
+	}
+	return 1
+}
+
 // analyzeFBD analyzes a .fbd document: transpile the netlist to ST (the FBD
 // semantics live in lang/fbd, once), run the normal ST analysis over the
 // result, and project diagnostic positions back onto the .fbd source through
@@ -155,6 +196,120 @@ func analyzeFBD(text, prelude string, preludeLines int) analysis {
 		a.Diags[i].Range = lineRange(text, orig)
 	}
 	return a
+}
+
+// analyzeSFC analyzes a .sfc document: sfc.Parse + the §5.1 structural
+// checks (lang/sfc), positioned directly on the .sfc source, plus — the
+// same composition analyzeFBD/analyzeLD use for theirs — a transpile hop
+// (sfc.TranspileWithLines) into ordinary ST, run through the full `analyze`
+// semantic pass with diagnostics projected back through the line map. Because
+// transition conditions and action bodies are spliced into the generated ST
+// verbatim, this gives hover/completion/definition/undeclared-identifier
+// diagnostics inside them for free, exactly as FBD's netlist does.
+//
+// Two additions beyond a straight FBD/LD mirror:
+//   - Step positions come from the SFC AST directly (sfc.Parse re-parses the
+//     original .sfc text, not the transpiled ST), so pseudo-Symbols for step
+//     names carry correct .sfc-source positions with no remap needed.
+//   - Every step is exposed as a Symbol of synthetic type "STEP", and a
+//     synthetic UDT-like entry for "STEP" is added to typeMembers with X
+//     (BOOL) and T (TIME) fields. That's enough for the existing
+//     member-chain machinery (resolveChain/memberCompletions) to turn
+//     "Fill." into X/T completions, and for hover on a step name (e.g. the
+//     "Fill" in "Fill.X") to show "Fill : STEP — SFC step" — no new
+//     machinery, just data the generic ST-hover/completion code already
+//     knows how to render.
+func analyzeSFC(text, prelude string, preludeLines int) analysis {
+	var a analysis
+	prog, err := sfc.Parse(text)
+	if err != nil {
+		a.Diags = append(a.Diags, Diagnostic{
+			Range:    lineRange(text, sfcErrLine(err)),
+			Severity: SeverityError,
+			Source:   "nautilus-sfc",
+			Message:  err.Error(),
+		})
+		return a
+	}
+
+	var structDiags []Diagnostic
+	for _, d := range sfc.Check(prog) {
+		sev := SeverityError
+		if d.Severity == sfc.SeverityWarning {
+			sev = SeverityWarning
+		}
+		structDiags = append(structDiags, Diagnostic{
+			Range:    posRange(text, st.Pos{Line: d.Pos.Line, Col: d.Pos.Col}),
+			Severity: sev,
+			Source:   "nautilus-sfc",
+			Message:  d.Message,
+		})
+	}
+
+	stText, lineMap, terr := sfc.TranspileWithLines(text)
+	if terr != nil {
+		a.Diags = append(structDiags, Diagnostic{
+			Range:    lineRange(text, sfcErrLine(terr)),
+			Severity: SeverityError,
+			Source:   "nautilus-sfc",
+			Message:  terr.Error(),
+		})
+		return a
+	}
+
+	a = analyze(stText, prelude, preludeLines)
+	for i := range a.Diags {
+		// Diagnostics carry 0-based lines; the map is 1-based on both sides.
+		orig := 1
+		if l := a.Diags[i].Range.Start.Line; l >= 0 && l < len(lineMap) {
+			orig = lineMap[l]
+		}
+		a.Diags[i].Range = lineRange(text, orig)
+	}
+	a.Diags = append(structDiags, a.Diags...)
+
+	addStepSymbols(&a, prog)
+	return a
+}
+
+// addStepSymbols exposes each SFC step as a Symbol of synthetic type "STEP"
+// (Pos already in .sfc-source coordinates, straight from the AST) and
+// registers "STEP"'s synthetic X/T members, so the generic hover/member-
+// completion machinery picks up the Step.X / Step.T idiom for free.
+func addStepSymbols(a *analysis, prog *sfc.Program) {
+	if len(prog.Steps) == 0 {
+		return
+	}
+	for _, s := range prog.Steps {
+		a.Symbols = append(a.Symbols, Symbol{
+			Name:      s.Name,
+			Datatype:  "STEP",
+			BlockKind: "SFC step",
+			Pos:       st.Pos{Line: s.Pos.Line, Col: s.Pos.Col},
+		})
+	}
+	if a.typeMembers == nil {
+		a.typeMembers = map[string][]TypeMember{}
+	}
+	if _, exists := a.typeMembers["step"]; !exists {
+		a.typeMembers["step"] = []TypeMember{
+			{Name: "X", Datatype: "BOOL"},
+			{Name: "T", Datatype: "TIME"},
+		}
+	}
+}
+
+// sfcLineRe extracts the "line N" a lang/sfc parse error reports, 1 if none
+// — the same pattern ldErrLine uses for lang/ld.
+var sfcLineRe = regexp.MustCompile(`line (\d+)`)
+
+func sfcErrLine(err error) int {
+	if m := sfcLineRe.FindStringSubmatch(err.Error()); m != nil {
+		if n, e := strconv.Atoi(m[1]); e == nil {
+			return n
+		}
+	}
+	return 1
 }
 
 // hoverTypeMaxLines caps a struct expansion so a 170-member AOI stays a

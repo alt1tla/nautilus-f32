@@ -2,21 +2,31 @@ package runtime
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/joyautomation/nautilus/internal/stproject"
 	nio "github.com/joyautomation/nautilus/io"
 	"github.com/joyautomation/nautilus/lang/ir"
 )
 
 // Options configure a Runtime.
 type Options struct {
-	Program string        // IEC 61131-3 source
-	Driver  nio.Driver    // field I/O
-	Scan    time.Duration // target scan interval (default 100ms)
-	Inputs  []string      // tags read from the driver before each scan
-	Outputs []string      // tags written to the driver after each scan
-	Seed    nio.Values    // initial operator/config tag values
+	Program string // IEC 61131-3 source (ST, or ST header + FBD body)
+	// Libraries are ST sources declaring TYPEs, FUNCTIONs, and
+	// FUNCTION_BLOCKs the program calls — the unit of logic reuse in
+	// IEC 61131-3. They compose ahead of Program exactly the way the
+	// editor, LSP, and `nautilus pull` compose a project directory, so
+	// online edits round-trip losslessly. The program may be ST or FBD;
+	// libraries are ST.
+	Libraries []string
+	Driver    nio.Driver    // field I/O
+	Scan      time.Duration // target scan interval (default 100ms)
+	Inputs    []string      // tags read from the driver before each scan
+	Outputs   []string      // tags written to the driver after each scan
+	Seed      nio.Values    // initial operator/config tag values
 	// DtTag, if set, receives the measured scan-to-scan seconds each scan
 	// (bind it to your program's dt input, e.g. "ScanDtS").
 	DtTag string
@@ -24,6 +34,49 @@ type Options struct {
 	// units for a live tag table. Purely informational; the runtime never
 	// reads it. Served by the server package at GET /api/meta.
 	Meta map[string]TagMeta
+	// Tags declares tags by ROLE — Input/Output/Setpoint/State, each with
+	// its seed and HMI meta in one place (see tagdef.go). Merged with the
+	// flat fields above, which remain fully supported.
+	Tags []TagDef
+	// Tasks are additional programs on their own scan rates — IEC
+	// 61131-3's resource/task model (a fast interlock task beside a slow
+	// reporting task). All tasks share the tag store; scans serialize on
+	// one lock so every scan sees a consistent snapshot. The MAIN task
+	// (Program/Scan above) owns field I/O and remains the online-edit
+	// target; task programs are fixed at composition.
+	Tasks []Task
+}
+
+// Task is one additional program in the resource: its source, its own
+// libraries, and its scan interval.
+type Task struct {
+	Name      string        // diagnostics label ("interlock", "reports")
+	Program   string        // IEC source (ST, or ST header + FBD body)
+	Libraries []string      // composed ahead of Program, like Options.Libraries
+	Scan      time.Duration // this task's interval (default 100ms)
+	DtTag     string        // optional measured-dt tag, like Options.DtTag
+}
+
+// TaskStats is one additional task's health, riding inside ScanStats.
+type TaskStats struct {
+	Name        string  `json:"name"`
+	TargetMs    float64 `json:"targetMs"`
+	Count       uint64  `json:"count"`
+	LastMs      float64 `json:"lastMs"`
+	LogicErrors uint64  `json:"logicErrors"`
+	LastError   string  `json:"lastError,omitempty"`
+}
+
+// taskRun is a compiled Task plus its live scheduling state.
+type taskRun struct {
+	name  string
+	prog  *Program
+	scan  time.Duration
+	dtTag string
+
+	mu       sync.Mutex
+	lastScan time.Time
+	stats    TaskStats
 }
 
 // TagMeta is HMI-facing tag documentation: a human description and the
@@ -44,6 +97,11 @@ type Runtime struct {
 	outputs []string
 	dtTag   string
 	meta    map[string]TagMeta
+	tasks   []*taskRun
+
+	// scanMu serializes scan execution across the main task and every
+	// additional task — a scan always sees a consistent tag snapshot.
+	scanMu sync.Mutex
 
 	mu       sync.Mutex
 	lastScan time.Time
@@ -89,10 +147,17 @@ type ScanStats struct {
 	Recent    []float64 `json:"recent"`    // last 180 scan times, ms
 	Periods   []float64 `json:"periods"`   // last 180 actual periods, ms
 	Histogram []int     `json:"histogram"` // 2 ms buckets of scan time
+
+	// Additional tasks' health (empty when the resource runs one program).
+	Tasks []TaskStats `json:"tasks,omitempty"`
 }
 
 // New compiles the program and prepares the runtime.
 func New(o Options) (*Runtime, error) {
+	o = expandTags(o)
+	if len(o.Libraries) > 0 {
+		o.Program = stproject.Join(o.Libraries, o.Program)
+	}
 	prog, err := Compile(o.Program)
 	if err != nil {
 		return nil, err
@@ -108,6 +173,39 @@ func New(o Options) (*Runtime, error) {
 		prog: prog, tags: tags, driver: o.Driver, scan: o.Scan,
 		inputs: o.Inputs, outputs: o.Outputs, dtTag: o.DtTag, meta: o.Meta,
 	}
+	// POU names are the programs' identities (online edits route by them),
+	// so every program in the resource must carry a distinct one.
+	pous := map[string]string{strings.ToLower(prog.POU()): MainTaskName}
+	for i, td := range o.Tasks {
+		src := td.Program
+		if len(td.Libraries) > 0 {
+			src = stproject.Join(td.Libraries, src)
+		}
+		name := td.Name
+		if name == "" {
+			name = fmt.Sprintf("task%d", i+1)
+		}
+		if name == MainTaskName {
+			return nil, fmt.Errorf("task name %q is reserved for the main task", MainTaskName)
+		}
+		tprog, err := Compile(src)
+		if err != nil {
+			return nil, fmt.Errorf("task %s: %w", name, err)
+		}
+		pou := strings.ToLower(tprog.POU())
+		if other, dup := pous[pou]; dup {
+			return nil, fmt.Errorf("task %s: PROGRAM %s collides with task %s — POU names identify programs and must be unique", name, tprog.POU(), other)
+		}
+		pous[pou] = name
+		scan := td.Scan
+		if scan <= 0 {
+			scan = 100 * time.Millisecond
+		}
+		tr := &taskRun{name: name, prog: tprog, scan: scan, dtTag: td.DtTag}
+		tr.stats.Name = name
+		tr.stats.TargetMs = scan.Seconds() * 1000
+		r.tasks = append(r.tasks, tr)
+	}
 	r.stats.TargetMs = o.Scan.Seconds() * 1000
 	r.stats.IOHealthy = true
 	r.stats.Recent = make([]float64, 0, historyLen)
@@ -119,12 +217,87 @@ func New(o Options) (*Runtime, error) {
 // Tags exposes the tag store for operator writes and HMI reads.
 func (r *Runtime) Tags() *Tags { return r.tags }
 
-// Program exposes the compiled program (hot-swap, status).
+// Program exposes the main task's compiled program (hot-swap, status).
 func (r *Runtime) Program() *Program { return r.prog }
 
-// Run drives the scan loop until the context is cancelled: read inputs,
-// execute the program, write outputs — every Scan interval.
+// MainTaskName is the reserved name of the main task (Options.Program).
+const MainTaskName = "main"
+
+// TaskNames lists the additional tasks, in declaration order.
+func (r *Runtime) TaskNames() []string {
+	names := make([]string, len(r.tasks))
+	for i, tr := range r.tasks {
+		names[i] = tr.name
+	}
+	return names
+}
+
+// TaskProgram returns a task's program by task name — "main" (or "") for
+// the main task, nil for an unknown name. Task programs hot-swap exactly
+// like the main one; the swap applies on that task's next scan.
+func (r *Runtime) TaskProgram(name string) *Program {
+	if name == "" || name == MainTaskName {
+		return r.prog
+	}
+	for _, tr := range r.tasks {
+		if tr.name == name {
+			return tr.prog
+		}
+	}
+	return nil
+}
+
+// AllLocals merges every program's retained locals into one watch surface
+// (HMI watches, editor live-value pills). Tasks first, the main task last,
+// so a name collision resolves to the main program's value — the behavior
+// single-program controllers always had.
+func (r *Runtime) AllLocals() map[string]any {
+	out := map[string]any{}
+	for _, tr := range r.tasks {
+		for k, v := range tr.prog.Locals() {
+			out[k] = v
+		}
+	}
+	for k, v := range r.prog.Locals() {
+		out[k] = v
+	}
+	return out
+}
+
+// ProgramByPOU finds the program — main or task — whose `PROGRAM <Name>`
+// matches, case-insensitively, returning it with its task name. This is
+// how online edits route: the POU name is the program's identity. nil for
+// no match.
+func (r *Runtime) ProgramByPOU(pou string) (*Program, string) {
+	if strings.EqualFold(r.prog.POU(), pou) {
+		return r.prog, MainTaskName
+	}
+	for _, tr := range r.tasks {
+		if strings.EqualFold(tr.prog.POU(), pou) {
+			return tr.prog, tr.name
+		}
+	}
+	return nil, ""
+}
+
+// Run drives the scan loops until the context is cancelled: the main task
+// (read inputs → execute → write outputs, every Scan interval) plus one
+// loop per additional task.
 func (r *Runtime) Run(ctx context.Context) {
+	for _, tr := range r.tasks {
+		go func(tr *taskRun) {
+			t := time.NewTicker(tr.scan)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					r.scanTask(tr)
+				}
+			}
+		}(tr)
+	}
 	t := time.NewTicker(r.scan)
 	defer t.Stop()
 	for {
@@ -135,6 +308,48 @@ func (r *Runtime) Run(ctx context.Context) {
 			r.Scan()
 		}
 	}
+}
+
+// ScanTask executes one scan of an additional task by name — for tests and
+// custom schedulers, the per-task analog of Scan().
+func (r *Runtime) ScanTask(name string) error {
+	for _, tr := range r.tasks {
+		if tr.name == name {
+			r.scanTask(tr)
+			return nil
+		}
+	}
+	return fmt.Errorf("runtime: no task named %q", name)
+}
+
+// scanTask runs one cycle of an additional task: measured dt in, program
+// against the shared tag store, stats out. No driver I/O — the main task
+// owns the field seam; tasks compute on the store at their own rates.
+func (r *Runtime) scanTask(tr *taskRun) {
+	t0 := time.Now()
+	tr.mu.Lock()
+	dt := tr.scan.Seconds()
+	if !tr.lastScan.IsZero() {
+		dt = t0.Sub(tr.lastScan).Seconds()
+	}
+	tr.lastScan = t0
+	tr.mu.Unlock()
+
+	r.scanMu.Lock()
+	if tr.dtTag != "" {
+		r.tags.SetReal(tr.dtTag, dt)
+	}
+	err := tr.prog.Run(r.tags)
+	r.scanMu.Unlock()
+
+	tr.mu.Lock()
+	tr.stats.Count++
+	tr.stats.LastMs = time.Since(t0).Seconds() * 1000
+	if err != nil {
+		tr.stats.LogicErrors++
+		tr.stats.LastError = err.Error()
+	}
+	tr.mu.Unlock()
 }
 
 // Scan executes one full cycle: read inputs, run the program, write outputs.
@@ -150,6 +365,10 @@ func (r *Runtime) Scan() {
 	}
 	r.lastScan = t0
 	r.mu.Unlock()
+
+	// The whole cycle excludes other tasks — one consistent tag snapshot.
+	r.scanMu.Lock()
+	defer r.scanMu.Unlock()
 
 	// 1. inputs — on a read failure the scan runs on last-known values.
 	var ioErr error
@@ -266,11 +485,16 @@ func pushSample(s []float64, v float64) []float64 {
 // Stats returns a copy of the current scan health metrics.
 func (r *Runtime) Stats() ScanStats {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	s := r.stats
 	s.Recent = append([]float64(nil), r.stats.Recent...)
 	s.Periods = append([]float64(nil), r.stats.Periods...)
 	s.Histogram = append([]int(nil), r.stats.Histogram...)
+	r.mu.Unlock()
+	for _, tr := range r.tasks {
+		tr.mu.Lock()
+		s.Tasks = append(s.Tasks, tr.stats)
+		tr.mu.Unlock()
+	}
 	return s
 }
 

@@ -1,0 +1,219 @@
+# Language reference: evaluation flow, functions, and function blocks
+
+This is the reference for what runs inside a nautilus controller: how a
+scan evaluates your logic in each IEC 61131-3 language, and what every
+built-in operator, function, and function block does — its arguments, its
+result type, and its behavior. The compiler enforces everything described
+here; when logic doesn't type-check (say, a numeric function used where a
+BOOL must flow), the result is a **compile diagnostic on the offending
+line/rung**, never a silent coercion.
+
+- [How a scan evaluates](#how-a-scan-evaluates)
+- [Ladder power flow](#ladder-power-flow)
+- [Types](#types)
+- [Operators](#operators)
+- [Standard functions](#standard-functions)
+- [Type conversions](#type-conversions)
+- [Standard function blocks](#standard-function-blocks)
+
+## How a scan evaluates
+
+Every task runs the classic PLC cycle on its interval:
+
+```
+read inputs → evaluate the program top to bottom → write outputs
+```
+
+All three languages end up as the same intermediate form, one hop at a
+time:
+
+```
+ .st  ─────────────────────────►  IR (compiled, type-checked)
+ .fbd ── transpile ──► ST ──────►  IR
+ .ld  ── transpile ──► FBD ──► ST ─►  IR
+```
+
+Because each hop preserves line maps, a diagnostic anywhere in that chain
+lands back on **your** source — an `.ld` error points at the rung, an
+`.fbd` error at the statement. The text file is always the source of
+truth; the graphical editors are projections that edit it structurally.
+
+Statements evaluate **top to bottom within a scan**, so a value written by
+one rung/statement is visible to the ones below it in the same scan, and
+to everything on the next scan (that's what makes the seal-in idiom work).
+
+## Ladder power flow
+
+A rung is a boolean expression that reads left to right:
+
+| Element | Text | Meaning |
+| --- | --- | --- |
+| NO contact | `Tag` | passes power when `Tag` is TRUE |
+| NC contact | `/Tag` | passes power when `Tag` is FALSE |
+| Parallel branch | `[ a \| b ]` | OR of its legs; legs are series (AND) and nest freely |
+| Function contact | `FN(args)` | passes power when the call yields TRUE — **the function must return BOOL** |
+| Function block | `inst:TYPE(args)` | power drives the block's power-in pin; power continues from its power-out pin (table [below](#standard-function-blocks)) |
+| Coil | `( Tag )` | `Tag :=` the rung condition, every scan |
+| Set coil | `( S Tag )` | latch: `Tag := Tag OR condition` |
+| Reset coil | `( R Tag )` | unlatch: `Tag := Tag AND NOT condition` |
+
+Series elements AND together; a rung with only a coil is driven by the
+rail (`TRUE`). Multiple coils on one rung share the same condition.
+
+**The BOOL rule.** Power is boolean, so anything that gates it must yield
+BOOL. Comparisons do: `GT(TempC, 90.0)` is a fine contact. Numeric
+functions don't: `ADD(TempC, 0.0)` as a contact is a **compile error**
+(`operator AND on BOOL and REAL`, or `cannot assign REAL to BOOL` when
+it's alone on the rung) — ADD does not "pass through" its input. Numeric
+functions belong *inside* a comparison's arguments — `GE(ADD(Base, Bias),
+Limit)` — or in an FBD/ST program, where values rather than power flow
+between elements.
+
+Reading FB outputs: any instance output is addressable as `inst.Pin`
+everywhere — `GE(t2.ET, T#2S)` as a contact, `t2.Q` as an operand, or
+from another task's FBD/ST program. To capture an output **into a
+variable** at the call site, use the standard's output binding:
+`t2:TON(PT := T#5S, ET => Elapsed)` — the one way ladder stores a
+non-BOOL (coils only assign BOOL). `=>` works in ST and FBD calls too.
+
+## Types
+
+`BOOL`, `INT`, `DINT`, `UINT`, `UDINT`, `WORD`, `REAL`, `LREAL`, `TIME`,
+`STRING`, plus `ARRAY[lo..hi] OF T` and user `TYPE ... STRUCT`.
+
+- Integer kinds share one 64-bit runtime representation; `REAL`/`LREAL`
+  are float64.
+- `TIME` counts **milliseconds** internally. Literals: `T#500MS`, `T#5S`,
+  `T#2M30S`. TIME values compare with the ordinary comparisons.
+- Mixed numeric arguments promote to REAL; comparing or combining a
+  STRING with a number is an error, not a coercion.
+
+## Operators
+
+These are the FBD/ladder block names that lower to ST operators. "n-ary"
+means the block accepts 2+ inputs (the `+` pin in the FBD editor).
+
+| Name | Arguments | Result | Behavior |
+| --- | --- | --- | --- |
+| `AND`, `OR`, `XOR` | n-ary BOOL (or INT for bitwise) | same | logical/bitwise |
+| `NOT` | 1 BOOL/INT | same | negation/complement |
+| `ADD` | n-ary numeric | common type | sum |
+| `SUB` | 2 numeric | common type | difference |
+| `MUL` | n-ary numeric | common type | product |
+| `DIV` | 2 numeric | common type | quotient; integer ÷0 yields 0 (scan keeps running) |
+| `MOD` | 2 INT | INT | remainder; ÷0 yields 0 |
+| `MOVE` | 1 any | same | pass-through assignment (FBD wiring aid) |
+| `GT`, `GE`, `LT`, `LE` | 2 comparable | **BOOL** | ordering (numeric or TIME) |
+| `EQ`, `NE` | 2 comparable | **BOOL** | equality |
+
+The comparison row is the ladder-relevant one: those six are the
+functions that can gate power directly.
+
+## Standard functions
+
+Stateless, callable from ST, FBD blocks, and (where they return BOOL —
+or inside arguments) ladder function contacts.
+
+### Selection
+
+| Name | Signature | Result | Behavior |
+| --- | --- | --- | --- |
+| `SEL` | `SEL(G: BOOL, IN0, IN1)` | type of IN0/IN1 | binary selector: G=FALSE → IN0, G=TRUE → IN1 |
+| `MUX` | `MUX(K: INT, IN0, …, INn)` | common type | K picks the K-th input (0-based); an out-of-range K **faults the scan** — clamp K with `LIMIT` if it can wander |
+| `MIN`, `MAX` | n-ary numeric | common type | smallest / largest |
+| `LIMIT` | `LIMIT(MN, IN, MX)` | common type | IN clamped into [MN, MX] |
+
+### Numeric
+
+| Name | Signature | Result | Behavior |
+| --- | --- | --- | --- |
+| `ABS` | 1 numeric | same type | absolute value |
+| `SQRT`, `LN`, `LOG`, `EXP` | 1 numeric | REAL | root, ln, log₁₀, eˣ |
+| `EXPT` | `EXPT(base, exp)` | REAL | baseᵉˣᵖ |
+| `TRUNC` | 1 REAL | INT | toward-zero truncation |
+| `SIN`, `COS`, `TAN` | 1 numeric (radians) | REAL | trigonometry |
+| `ASIN`, `ACOS`, `ATAN` | 1 numeric | REAL | inverse trig |
+| `ATAN2` | `ATAN2(Y, X)` | REAL | quadrant-correct arctangent |
+
+### Bit operations
+
+| Name | Signature | Result | Behavior |
+| --- | --- | --- | --- |
+| `SHL`, `SHR` | `(IN: INT/WORD, N: INT)` | same as IN | shift left / logical shift right (zero-fill) |
+| `ROL`, `ROR` | `(IN, N)` | same as IN | rotate left / right |
+
+Caveat: the runtime's integers are 64-bit and declared widths aren't
+tracked, so rotates operate over 64 bits — a `WORD` you think of as 16
+bits rotates as a 64-bit value.
+
+### Strings
+
+All positions are **1-based** (IEC convention); length/position arguments
+clamp to the string instead of faulting.
+
+| Name | Signature | Result | Behavior |
+| --- | --- | --- | --- |
+| `LEN` | `LEN(IN)` | INT | length |
+| `LEFT`, `RIGHT` | `(IN, L)` | STRING | first / last L characters |
+| `MID` | `MID(IN, L, P)` | STRING | L characters starting at position P |
+| `CONCAT` | n-ary STRING | STRING | concatenation |
+| `INSERT` | `INSERT(IN1, IN2, P)` | STRING | IN2 inserted into IN1 after position P |
+| `DELETE` | `DELETE(IN, L, P)` | STRING | L characters removed starting at P |
+| `REPLACE` | `REPLACE(IN1, IN2, L, P)` | STRING | L characters at P replaced by IN2 |
+| `FIND` | `FIND(IN1, IN2)` | INT | 1-based position of IN2 in IN1; **0** when absent or IN2 empty |
+
+## Type conversions
+
+Explicit, in the standard's `X_TO_Y` naming — there are no implicit
+conversions across kinds:
+
+| Conversion | Notes |
+| --- | --- |
+| `INT_TO_REAL`, `REAL_TO_INT` | REAL→INT rounds to nearest |
+| `BOOL_TO_INT`, `INT_TO_BOOL` | 0 ↔ FALSE, nonzero → TRUE |
+| `INT_TO_TIME`, `TIME_TO_INT` | the INT is **milliseconds** |
+| `REAL_TO_TIME`, `TIME_TO_REAL` | milliseconds, rounded to nearest |
+| `INT_TO_STRING`, `REAL_TO_STRING`, `BOOL_TO_STRING`, `TIME_TO_STRING` | formatting |
+| `STRING_TO_INT`, `STRING_TO_REAL`, `STRING_TO_BOOL` | parse; a non-parsing string is a runtime scan fault, so validate upstream |
+
+## Standard function blocks
+
+Stateful — declare an instance (`VAR t1 : TON; END_VAR`, or inline in a
+rung as `t1:TON(...)`), and each instance keeps its own state between
+scans. Outputs read as `inst.Pin` from any language.
+
+| Type | Inputs | Outputs | Behavior |
+| --- | --- | --- | --- |
+| `TON` | `IN: BOOL, PT: TIME` | `Q: BOOL, ET: TIME` | on-delay: Q rises after IN has been TRUE for PT; ET is elapsed |
+| `TOF` | `IN, PT` | `Q, ET` | off-delay: Q stays TRUE for PT after IN drops |
+| `TP` | `IN, PT` | `Q, ET` | pulse: rising IN produces a PT-wide TRUE pulse |
+| `CTU` | `CU: BOOL, R: BOOL, PV: INT` | `Q: BOOL, CV: INT` | count rising CU edges; Q when CV ≥ PV; R resets |
+| `CTD` | `CD: BOOL, LD: BOOL, PV: INT` | `Q, CV` | count down from PV (LD loads); Q when CV ≤ 0 |
+| `CTUD` | `CU, CD, R, LD, PV` | `QU, QD, CV` | up/down counter |
+| `R_TRIG` | `CLK: BOOL` | `Q: BOOL` | Q for exactly one scan on CLK's rising edge |
+| `F_TRIG` | `CLK` | `Q` | one-scan pulse on the falling edge |
+| `SR` | `S1: BOOL, R: BOOL` | `Q1: BOOL` | set-dominant latch |
+| `RS` | `S: BOOL, R1: BOOL` | `Q1: BOOL` | reset-dominant latch |
+
+### Power pins in ladder
+
+When a block sits in a rung, rung power drives one input and continues
+from one output; every other pin is passed (or read) by name in the
+parentheses:
+
+| Type | Power in | Power out |
+| --- | --- | --- |
+| `TON`, `TOF`, `TP` | `IN` | `Q` |
+| `CTU` | `CU` | `Q` |
+| `CTD` | `CD` | `Q` |
+| `R_TRIG`, `F_TRIG` | `CLK` | `Q` |
+| `SR` | `S1` | `Q1` |
+| `RS` | `S` | `Q1` |
+| user FUNCTION_BLOCK | `IN` | `Q` |
+
+Passing the power pin explicitly in the argument list (`t1:TON(IN := x)`)
+is an error — power owns it.
+
+User `FUNCTION`s and `FUNCTION_BLOCK`s written in library files
+participate everywhere the built-ins do; see "Structuring logic" in the
+main README.

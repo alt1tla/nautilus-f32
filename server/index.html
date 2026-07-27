@@ -90,6 +90,46 @@
       .tile .v small { font-size: 0.65rem; color: var(--muted); margin-left: 2px; }
       .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 0.6rem; margin-top: 0.6rem; }
       .chart { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 0.6rem 0.8rem; }
+      /* Field-driver status cards */
+      .drivers { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 0.7rem; }
+      /* grid-template-columns: minmax(0,1fr) is load-bearing: a single
+         implicit `auto` column sizes to the content's MAX-content and
+         overflows the card; a 1fr track is constrained to the card width. */
+      .dcard { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 0.8rem 0.9rem; display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.5rem; min-width: 0; overflow: hidden; }
+      .dcard.st-error, .dcard.st-degraded { border-color: color-mix(in srgb, var(--bad) 40%, var(--border)); }
+      .dcard .dhead { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; min-width: 0; }
+      /* min-width:0 lets the name shrink and ellipsize instead of forcing the
+         header (and card) wide when the group/node id is long. */
+      /* The NAME text ellipsizes; the kind badge stays fully visible (it's a
+         non-shrinking sibling, not part of the truncated text). */
+      .dcard .dname { display: flex; align-items: baseline; gap: 0.4rem; min-width: 0; font-family: var(--mono); font-weight: 650; font-size: 0.95rem; }
+      .dcard .dtxt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+      .dcard .dkind { flex: none; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border)); border-radius: 4px; padding: 0 0.3rem; }
+      .cbadge { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.72rem; font-weight: 600; white-space: nowrap; border: 1px solid var(--border); color: var(--text); }
+      .cbadge .cdot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--c); box-shadow: 0 0 5px color-mix(in srgb, var(--c) 70%, transparent); }
+      .cbadge.pulse .cdot { animation: pulse 1.4s ease-in-out infinite; }
+      .cbadge { --c: var(--muted); border-color: color-mix(in srgb, var(--c) 45%, var(--border)); background: color-mix(in srgb, var(--c) 12%, transparent); }
+      .st-connected .cbadge { --c: var(--good); }
+      .st-connecting .cbadge, .st-waiting .cbadge { --c: #d9a441; }
+      .st-degraded .cbadge { --c: #e0803a; }
+      .st-error .cbadge, .st-offline .cbadge { --c: var(--bad); }
+      .dcard .ddetail { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
+      .dcard .dmsg { font-size: 0.8rem; color: var(--text); }
+      .dcard .dmsg .dup { color: var(--muted); }
+      .dcard .derr { font-size: 0.72rem; color: var(--bad); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      /* min-width:0 lets the grid (and its tiles) shrink to the card width;
+         without it, nowrap tiles size to their intrinsic width and overflow
+         the card to the right. */
+      .dmetrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); gap: 0.4rem; min-width: 0; }
+      /* Fixed height + non-wrapping value: a metric whose text changes each
+         frame (a freshness time) must never reflow the card. */
+      .dmetric { background: var(--bg); border: 1px solid var(--border); border-radius: 7px; padding: 0.35rem 0.45rem; min-height: 2.7rem; min-width: 0; display: flex; flex-direction: column; justify-content: center; overflow: hidden; }
+      .dmetric .mv { font-family: var(--mono); font-weight: 650; font-size: 0.85rem; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .dmetric .ml { display: block; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+      .ddevices { border-top: 1px solid var(--border); padding-top: 0.5rem; display: grid; gap: 0.35rem; }
+      .ddevices .dh { font-size: 0.6rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+      .ddevice { display: flex; align-items: center; gap: 0.5rem; }
+      .ddevice .dv { font-size: 0.7rem; color: var(--muted); font-family: var(--mono); }
       .chart .k { display: block; font-size: 0.65rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); margin-bottom: 0.25rem; }
       .chart svg { width: 100%; display: block; }
       /* Smooth chart updates: sparklines scroll via a transitioned group
@@ -172,6 +212,22 @@
             <span class="io" id="ph-io">—</span>
           </div>
         </div>
+        <!-- Tasks: shown only when the resource runs more than one program.
+             The main task (which owns field I/O) leads; additional tasks
+             compute against the tag store at their own rates. -->
+        <div id="d-tasks-wrap" style="display: none; margin-top: 0.6rem">
+          <span class="k">tasks</span>
+          <table>
+            <thead><tr><th>task</th><th style="text-align:right">target</th><th style="text-align:right">last</th><th style="text-align:right">scans</th><th style="text-align:right">faults</th><th>last error</th></tr></thead>
+            <tbody id="d-tasks"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="drivers-wrap" style="display: none">
+        <h2>Field drivers</h2>
+        <p class="meta">field I/O and telemetry links — connection health, updated live</p>
+        <div class="drivers" id="drivers"></div>
       </section>
 
       <section>
@@ -191,6 +247,7 @@
           <li><span class="m">GET</span><a href="/api/state">/api/state</a><span class="desc">current tag snapshot + scan diagnostics (JSON)</span></li>
           <li><span class="m">GET</span><a href="/api/stream">/api/stream</a><span class="desc">live frames (Server-Sent Events)</span></li>
           <li><span class="m">GET</span><a href="/api/meta">/api/meta</a><span class="desc">tag descriptions/units, I/O binding, scan target</span></li>
+          <li><span class="m">GET</span><a href="/api/drivers">/api/drivers</a><span class="desc">field-driver / publisher connection health (JSON)</span></li>
           <li><span class="m">POST</span><span>/api/tags</span><span class="desc">write a tag: {"name":"TempSP","value":65}</span></li>
         </ul>
       </section>
@@ -222,7 +279,7 @@
         return String(v);
       }
 
-      const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+      const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
       const isCompound = (v) => v !== null && typeof v === "object";
 
       // Static controller description (GET /api/meta): tag docs + I/O binding.
@@ -425,6 +482,31 @@
           io.className = "io bad";
           io.textContent = "I/O FAULT — " + (s.lastIOError || "inputs held at last-known values");
         }
+
+        // Tasks table — only when additional tasks exist. The main task
+        // leads so the whole resource reads in one place.
+        const tw = $("d-tasks-wrap");
+        if (s.tasks && s.tasks.length) {
+          tw.style.display = "";
+          const row = (t) =>
+            `<tr><td>${esc(t.name)}</td>` +
+            `<td style="text-align:right">${fmtMs(t.targetMs, 0)} ms</td>` +
+            `<td style="text-align:right">${fmtMs(t.lastMs, 2)} ms</td>` +
+            `<td style="text-align:right">${(t.count ?? 0).toLocaleString()}</td>` +
+            `<td style="text-align:right"${t.logicErrors ? ' class="io bad"' : ""}>${t.logicErrors ?? 0}</td>` +
+            `<td class="desc">${t.logicErrors ? esc(t.lastError || "") : ""}</td></tr>`;
+          const main = {
+            name: "main",
+            targetMs: s.targetMs,
+            lastMs: s.lastMs,
+            count: s.count,
+            logicErrors: s.logicErrors,
+            lastError: s.lastError,
+          };
+          $("d-tasks").innerHTML = [main, ...s.tasks].map(row).join("");
+        } else {
+          tw.style.display = "none";
+        }
       }
 
       function render(frame) {
@@ -433,7 +515,56 @@
         lastTags = frame.tags ?? {};
         lastLocals = frame.locals ?? {};
         renderScan(frame.scan);
+        renderDrivers(frame.drivers ?? []);
         renderTable();
+      }
+
+      // ── field drivers ────────────────────────────────────────────────
+      const STATE_LABEL = {
+        connected: "Connected", connecting: "Connecting", waiting: "Waiting",
+        degraded: "Degraded", error: "Error", offline: "Offline",
+      };
+      const KIND_LABEL = { "ethernet-ip": "EtherNet/IP", sparkplug: "Sparkplug B" };
+      function badge(state, label, sm) {
+        const pulse = state === "connecting" || state === "waiting" ||
+          state === "degraded" || state === "error";
+        return `<span class="cbadge${pulse ? " pulse" : ""}"${sm ? ' style="font-size:0.66rem;padding:0.1rem 0.4rem"' : ""}>` +
+          `<span class="cdot"></span>${esc(label ?? STATE_LABEL[state] ?? state)}</span>`;
+      }
+      function fmtMetric(m) {
+        if (m.text) return esc(m.text);
+        const n = Number.isInteger(m.value) ? m.value.toLocaleString() : m.value.toFixed(2);
+        return esc(m.unit ? n + " " + m.unit : n);
+      }
+      function uptime(d) {
+        if (!d.sinceMs || d.state !== "connected") return "";
+        let s = Math.max(0, Math.floor((Date.now() - d.sinceMs) / 1000));
+        if (s < 60) return ` <span class="dup">· up ${s}s</span>`;
+        if (s < 3600) return ` <span class="dup">· up ${Math.floor(s / 60)}m</span>`;
+        return ` <span class="dup">· up ${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m</span>`;
+      }
+      function driverCard(d) {
+        const metrics = (d.metrics ?? []).map((m) =>
+          `<div class="dmetric"><span class="mv">${fmtMetric(m)}</span><span class="ml">${esc(m.label)}</span></div>`).join("");
+        const devices = (d.devices ?? []).length
+          ? `<div class="ddevices"><span class="dh">devices</span>` +
+            d.devices.map((dv) =>
+              `<div class="ddevice">${badge(dv.online ? "connected" : "offline", dv.id, true)}` +
+              (dv.detail ? `<span class="dv">${esc(dv.detail)}</span>` : "") + `</div>`).join("") + `</div>`
+          : "";
+        return `<div class="dcard st-${esc(d.state)}">` +
+          `<div class="dhead"><span class="dname"><span class="dtxt" title="${esc(d.name)}">${esc(d.name)}</span><span class="dkind">${esc(KIND_LABEL[d.kind] ?? d.kind)}</span></span>${badge(d.state)}</div>` +
+          `<div class="ddetail">${esc(d.detail)}</div>` +
+          `<div class="dmsg">${esc(d.message)}${uptime(d)}</div>` +
+          (d.lastError ? `<div class="derr" title="${esc(d.lastError)}">${esc(d.lastError)}</div>` : "") +
+          (metrics ? `<div class="dmetrics">${metrics}</div>` : "") +
+          devices + `</div>`;
+      }
+      function renderDrivers(drivers) {
+        const wrap = $("drivers-wrap");
+        if (!drivers.length) { wrap.style.display = "none"; return; }
+        wrap.style.display = "";
+        $("drivers").innerHTML = drivers.map(driverCard).join("");
       }
 
       $("tags").addEventListener("click", (e) => {

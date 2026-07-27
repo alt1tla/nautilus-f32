@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -63,16 +64,43 @@ type Composition struct {
 	Libraries   []string
 }
 
-// Compose reads a project directory and decomposes it: the .st files with no
-// PROGRAM (sorted by name) are libraries, and the single file with a PROGRAM
-// — .st or .fbd (the runtime accepts both) — is the program. override maps a
-// base file name to in-editor content so unsaved buffers win over disk.
-// Errors when there isn't exactly one program file — the pull target must be
-// unambiguous.
-func Compose(dir string, override map[string]string) (Composition, error) {
+var pouRe = regexp.MustCompile(`(?im)^\s*PROGRAM\s+([A-Za-z_][A-Za-z0-9_]*)`)
+
+// POU extracts the `PROGRAM <Name>` POU name from IEC source, "" if none.
+// On a multi-task controller the POU name is a program's identity — pull
+// and online edits match programs to files by it.
+func POU(src string) string {
+	if m := pouRe.FindStringSubmatch(src); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// ProgramFile is one program file in a (possibly multi-program) project.
+type ProgramFile struct {
+	File string // base name
+	Body string // file source
+	POU  string // `PROGRAM <Name>`
+}
+
+// MultiComposition is a project decomposed task-style: shared libraries
+// plus every program file, each identified by POU name — the workspace
+// shape of a multi-task controller (one program file per task).
+type MultiComposition struct {
+	Prelude   string // Join(Libraries, "") — the SplitProgram prefix
+	Libraries []string
+	Programs  []ProgramFile // sorted by file name
+}
+
+// ComposeAll reads a project directory and decomposes it: the .st files
+// with no PROGRAM (sorted by name) are libraries shared by every program;
+// each file with a PROGRAM — .st, .fbd, .ld, or .sfc — is one program.
+// override maps a base file name to in-editor content so unsaved buffers
+// win over disk.
+func ComposeAll(dir string, override map[string]string) (MultiComposition, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return Composition{}, err
+		return MultiComposition{}, err
 	}
 	type stFile struct {
 		name string
@@ -81,7 +109,7 @@ func Compose(dir string, override map[string]string) (Composition, error) {
 	var files []stFile
 	for _, e := range entries {
 		ext := strings.ToLower(filepath.Ext(e.Name()))
-		if e.IsDir() || (ext != ".st" && ext != ".fbd") {
+		if e.IsDir() || (ext != ".st" && ext != ".fbd" && ext != ".ld" && ext != ".sfc") {
 			continue
 		}
 		src, ok := override[e.Name()]
@@ -96,33 +124,45 @@ func Compose(dir string, override map[string]string) (Composition, error) {
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].name < files[j].name })
 
-	var libs []string
-	var programFile, programBody string
-	programs := 0
+	var m MultiComposition
 	for _, f := range files {
 		if hasProgram(f.src) {
-			programs++
-			programFile, programBody = f.name, f.src
+			m.Programs = append(m.Programs, ProgramFile{File: f.name, Body: f.src, POU: POU(f.src)})
 			continue
 		}
 		// Only .st files join the prelude; a non-program .fbd has no
 		// composition role (yet).
 		if strings.EqualFold(filepath.Ext(f.name), ".st") && IsLibrary(f.src) {
-			libs = append(libs, f.src)
+			m.Libraries = append(m.Libraries, f.src)
 		}
 	}
-	if programs == 0 {
+	m.Prelude = Join(m.Libraries, "")
+	return m, nil
+}
+
+// Compose reads a project directory and decomposes it: the .st files with no
+// PROGRAM (sorted by name) are libraries, and the single file with a PROGRAM
+// — .st or .fbd (the runtime accepts both) — is the program. Errors when
+// there isn't exactly one program file — the single-program target must be
+// unambiguous (multi-program projects use ComposeAll).
+func Compose(dir string, override map[string]string) (Composition, error) {
+	m, err := ComposeAll(dir, override)
+	if err != nil {
+		return Composition{}, err
+	}
+	if len(m.Programs) == 0 {
 		return Composition{}, fmt.Errorf("no .st or .fbd file with a PROGRAM in %s", dir)
 	}
-	if programs > 1 {
+	if len(m.Programs) > 1 {
 		return Composition{}, fmt.Errorf("multiple PROGRAM files in %s — pull needs exactly one", dir)
 	}
+	p := m.Programs[0]
 	return Composition{
-		Composed:    Join(libs, programBody),
-		Prelude:     Join(libs, ""),
-		ProgramFile: programFile,
-		ProgramBody: programBody,
-		Libraries:   libs,
+		Composed:    Join(m.Libraries, p.Body),
+		Prelude:     m.Prelude,
+		ProgramFile: p.File,
+		ProgramBody: p.Body,
+		Libraries:   m.Libraries,
 	}, nil
 }
 

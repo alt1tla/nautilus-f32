@@ -8,8 +8,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/joyautomation/nautilus/internal/stproject"
 	"github.com/joyautomation/nautilus/lang/fbd"
 	"github.com/joyautomation/nautilus/lang/ir"
+	"github.com/joyautomation/nautilus/lang/ld"
+	"github.com/joyautomation/nautilus/lang/sfc"
 	"github.com/joyautomation/nautilus/lang/st"
 )
 
@@ -43,23 +46,49 @@ type Program struct {
 // splitter uses.
 var fbdBlockRe = regexp.MustCompile(`(?mi)^\s*FBD\s*$`)
 
-// Language reports a program source's language: "fbd" when it carries an
-// FBD netlist block, else "st". The runtime accepts both everywhere a
-// program is given (boot, online edit); FBD transpiles through lang/fbd on
-// the way in, and the ORIGINAL source is what Source/Hash/Dirty describe —
-// so a workspace .fbd file compares 1:1 with what the controller reports.
+// Language reports a program source's language: "ld" for a Ladder Diagram
+// rung block, "fbd" for an FBD netlist block, "sfc" for a Sequential
+// Function Chart block, else "st". The runtime accepts all four everywhere
+// a program is given (boot, online edit); graphical/chart languages
+// transpile on the way in — LD to the FBD netlist, FBD to ST, SFC directly
+// to ST (a sibling front-end, not a stage in the LD/FBD chain — see
+// docs/design/sfc.md §3) — and the ORIGINAL source is what Source/Hash/
+// Dirty describe, so a workspace .ld/.fbd/.sfc file compares 1:1 with what
+// the controller reports.
 func Language(src string) string {
+	if ld.HasBlock(src) {
+		return "ld"
+	}
 	if fbdBlockRe.MatchString(src) {
 		return "fbd"
+	}
+	if sfc.HasBlock(src) {
+		return "sfc"
 	}
 	return "st"
 }
 
-// lowerSource compiles original program source — ST, or ST with an FBD
-// program body — down to the IR.
+// lowerSource compiles original program source — ST, or ST with an FBD,
+// LD, or SFC program body — down to the IR.
 func lowerSource(src string) (*ir.Program, error) {
+	if Language(src) == "ld" {
+		fbdSrc, err := ld.Transpile(src)
+		if err != nil {
+			return nil, err
+		}
+		src = fbdSrc
+	}
 	if Language(src) == "fbd" {
 		stSrc, err := fbd.Transpile(src)
+		if err != nil {
+			return nil, err
+		}
+		src = stSrc
+	}
+	if Language(src) == "sfc" {
+		// SFC transpiles directly to ST — not implemented yet (see
+		// lang/sfc/sfc.go); this errors cleanly until that lands.
+		stSrc, err := sfc.Transpile(src)
 		if err != nil {
 			return nil, err
 		}
@@ -97,6 +126,20 @@ func (p *Program) Swap(src string) error {
 	p.lastErr = err.Error()
 	p.mu.Unlock()
 	return err
+}
+
+// POUOf extracts the `PROGRAM <Name>` POU name from IEC source, "" if none
+// — how an incoming online edit names the program it targets. One
+// definition for the whole toolchain (stproject.POU).
+func POUOf(src string) string { return stproject.POU(src) }
+
+// POU returns the program's IEC POU name (`PROGRAM <Name>`), "" if the
+// source has none. Programs in a resource are addressed by this name for
+// online edits — it's the identity that survives recomposition.
+func (p *Program) POU() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return POUOf(p.source)
 }
 
 // Run executes one scan of the program against the tag store.

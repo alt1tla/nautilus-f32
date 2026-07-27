@@ -135,6 +135,12 @@ func (s *Server) setDocument(uri, text string) {
 	if strings.HasSuffix(strings.ToLower(uri), ".fbd") {
 		an = analyzeFBD
 	}
+	if strings.HasSuffix(strings.ToLower(uri), ".ld") {
+		an = analyzeLD
+	}
+	if strings.HasSuffix(strings.ToLower(uri), ".sfc") {
+		an = analyzeSFC
+	}
 	doc := &document{text: text, an: an(text, prelude, preludeLines)}
 	s.docs[uri] = doc
 	s.w.notify("textDocument/publishDiagnostics", PublishDiagnosticsParams{

@@ -345,3 +345,250 @@ func contains(ss []string, want string) bool {
 	}
 	return false
 }
+
+// ─── SFC ────────────────────────────────────────────────────────────────────
+
+// sfcWorkedExample is the design doc's §1.2 complete worked example, verbatim.
+const sfcWorkedExample = `PROGRAM TankBatch
+VAR_EXTERNAL
+  Start     : BOOL;
+  Abort     : BOOL;
+  Level     : REAL;
+  TempC     : REAL;
+  FillSP    : REAL;
+  EmptySP   : REAL;
+  HeatSP    : REAL;
+  FillValve : BOOL;
+  DrainValve: BOOL;
+  Heater    : BOOL;
+  Mixer     : BOOL;
+  RunLamp   : BOOL;
+  AbortLamp : BOOL;
+  BatchCount: INT;
+END_VAR
+VAR
+  mixT : TON;   (* referenced by the Mix action body *)
+END_VAR
+SFC
+
+  INITIAL_STEP Idle:
+    N  RunLamp;              (* boolean action: RunLamp := Idle.X ... see §2.5 *)
+    R  AbortLamp;            (* clear the abort lamp on return to Idle *)
+  END_STEP
+
+  STEP Fill:
+    N  RunLamp;
+    N  FillValve;            (* valve open while Fill active *)
+  END_STEP
+
+  STEP Heat:
+    N  RunLamp;
+    N  Heater;
+  END_STEP
+
+  STEP Mix:
+    N  RunLamp;
+    N  Stir;                 (* ACTION block, below *)
+  END_STEP
+
+  STEP Drain:
+    N   RunLamp;
+    N   DrainValve;
+    P1  CountBatch;          (* pulse: run its body once on activation *)
+  END_STEP
+
+  (* --- transitions --- *)
+
+  TRANSITION t_start FROM Idle TO Fill := Start AND NOT Abort;
+  END_TRANSITION
+
+  (* alternative divergence out of Fill: abort has priority (declared first) *)
+  TRANSITION t_abort FROM Fill TO Idle := Abort;
+  END_TRANSITION
+  TRANSITION t_full  FROM Fill TO (Heat, Mix) := Level >= FillSP;   (* simultaneous divergence *)
+  END_TRANSITION
+
+  (* simultaneous convergence: fires only when BOTH Heat and Mix are active *)
+  TRANSITION t_done FROM (Heat, Mix) TO Drain := (TempC >= HeatSP) AND mixT.Q;
+  END_TRANSITION
+
+  TRANSITION t_empty FROM Drain TO Idle := Level <= EmptySP;
+  END_TRANSITION
+
+  (* --- action blocks (ST bodies) --- *)
+
+  ACTION Stir:
+    Mixer := Mix.X;                  (* track the step: drops to FALSE on the final scan *)
+    mixT(IN := Mix.X, PT := T#30S);  (* mixing timer; falling edge resets it (§2.5.1) *)
+  END_ACTION
+
+  ACTION CountBatch:
+    BatchCount := BatchCount + 1;     (* runs exactly once, on Drain activation *)
+  END_ACTION
+
+  (* S/R stored-action demo lives on the lamp: an operator-visible latch *)
+  ACTION HoldAbort:
+  END_ACTION
+
+END_SFC
+END_PROGRAM
+`
+
+func TestAnalyzeSFCWorkedExampleClean(t *testing.T) {
+	a := analyzeSFC(sfcWorkedExample, "", 0)
+	if len(a.Diags) != 0 {
+		t.Fatalf("expected no diagnostics for the §1.2 worked example, got %+v", a.Diags)
+	}
+}
+
+func TestAnalyzeSFCConditionSemanticError(t *testing.T) {
+	// "Bogus" is undeclared; it's referenced from t1's condition, on line 12
+	// (1-based) / 0-based 11 — the TRANSITION keyword line, since a
+	// (here single-line) condition maps to the transition's source line.
+	src := `PROGRAM P
+VAR_EXTERNAL
+  Start : BOOL;
+  Run   : BOOL;
+END_VAR
+SFC
+  INITIAL_STEP Idle:
+  END_STEP
+  STEP Run_Step:
+    N Run;
+  END_STEP
+  TRANSITION t1 FROM Idle TO Run_Step := Bogus;
+  END_TRANSITION
+  TRANSITION t2 FROM Run_Step TO Idle := NOT Start;
+  END_TRANSITION
+END_SFC
+END_PROGRAM
+`
+	a := analyzeSFC(src, "", 0)
+	var found bool
+	for _, d := range a.Diags {
+		if strings.Contains(d.Message, "undeclared identifier") {
+			found = true
+			if d.Range.Start.Line != 11 {
+				t.Errorf("diagnostic on 0-based line %d, want 11 (the TRANSITION line)", d.Range.Start.Line)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected an undeclared-identifier diagnostic, got %+v", a.Diags)
+	}
+}
+
+func TestAnalyzeSFCActionBodySemanticError(t *testing.T) {
+	// "Bogus" is undeclared, referenced from the ACTION DoIt body; that body
+	// statement is on 0-based line 18 (1-based 19) — action bodies map
+	// per-line, unlike conditions, so the diagnostic lands on the exact
+	// offending line rather than the ACTION keyword's line.
+	src := `PROGRAM P
+VAR_EXTERNAL
+  Start : BOOL;
+END_VAR
+VAR
+  Cnt : INT;
+END_VAR
+SFC
+  INITIAL_STEP Idle:
+  END_STEP
+  STEP Run_Step:
+    N DoIt;
+  END_STEP
+  TRANSITION t1 FROM Idle TO Run_Step := Start;
+  END_TRANSITION
+  TRANSITION t2 FROM Run_Step TO Idle := NOT Start;
+  END_TRANSITION
+  ACTION DoIt:
+    Cnt := Bogus;
+  END_ACTION
+END_SFC
+END_PROGRAM
+`
+	a := analyzeSFC(src, "", 0)
+	var found bool
+	for _, d := range a.Diags {
+		if strings.Contains(d.Message, "undeclared identifier") {
+			found = true
+			if d.Range.Start.Line != 18 {
+				t.Errorf("diagnostic on 0-based line %d, want 18 (the action body statement)", d.Range.Start.Line)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected an undeclared-identifier diagnostic, got %+v", a.Diags)
+	}
+}
+
+func TestAnalyzeSFCStructuralErrorStillReported(t *testing.T) {
+	// "Ghost" is not a declared step: a structural (§5.1) diagnostic from
+	// lang/sfc.Check must still surface even though the chart also proceeds
+	// through the transpile+ST hop.
+	src := `PROGRAM P
+VAR_EXTERNAL
+  Start : BOOL;
+END_VAR
+SFC
+  INITIAL_STEP Idle:
+  END_STEP
+  TRANSITION t1 FROM Ghost TO Idle := Start;
+  END_TRANSITION
+END_SFC
+END_PROGRAM
+`
+	a := analyzeSFC(src, "", 0)
+	var found bool
+	for _, d := range a.Diags {
+		if d.Source == "nautilus-sfc" && strings.Contains(d.Message, "unknown step") {
+			found = true
+			if d.Severity != SeverityError {
+				t.Errorf("severity = %d, want error", d.Severity)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected a structural 'unknown step' diagnostic, got %+v", a.Diags)
+	}
+}
+
+func TestAnalyzeSFCHoverVariableInCondition(t *testing.T) {
+	a := analyzeSFC(sfcWorkedExample, "", 0)
+	// Level is VAR_EXTERNAL REAL, referenced only from t_full's condition
+	// ("Level >= FillSP") and t_empty's — never declared anywhere else in the
+	// generated ST body, so a successful lookup demonstrates hover works
+	// inside a transition condition, not just the header.
+	sym := a.lookup("Level", 1)
+	if sym == nil || sym.Datatype != "REAL" {
+		t.Fatalf("lookup(Level) = %+v, want REAL", sym)
+	}
+	sym = a.lookup("level", 1) // IEC case-insensitivity
+	if sym == nil || sym.Name != "Level" {
+		t.Fatalf("case-insensitive lookup(level) = %+v", sym)
+	}
+}
+
+func TestAnalyzeSFCStepPseudoSymbol(t *testing.T) {
+	a := analyzeSFC(sfcWorkedExample, "", 0)
+	sym := a.lookup("Fill", 1)
+	if sym == nil || sym.Datatype != "STEP" || sym.BlockKind != "SFC step" {
+		t.Fatalf("lookup(Fill) = %+v, want STEP/\"SFC step\"", sym)
+	}
+	// Fill's step position is in .sfc-source coordinates straight off the
+	// AST — no line-map remap — so go-to-definition lands on the real
+	// "STEP Fill:" line (1-based 28 in sfcWorkedExample).
+	if sym.Pos.Line != 28 {
+		t.Errorf("Fill step Pos.Line = %d, want 28 (the STEP Fill: line)", sym.Pos.Line)
+	}
+
+	// The Step.X / Step.T idiom: "Fill." resolves through the synthetic
+	// "STEP" type to X (BOOL) and T (TIME) member completions.
+	typ, ok := a.resolveChain("Fill", nil, 1)
+	if !ok || typ != "STEP" {
+		t.Fatalf("resolveChain(Fill) = %q,%v, want STEP,true", typ, ok)
+	}
+	labels := labelsOf(a.memberCompletions(typ))
+	if !contains(labels, "X") || !contains(labels, "T") {
+		t.Errorf("Fill. completions = %v, want X and T", labels)
+	}
+}

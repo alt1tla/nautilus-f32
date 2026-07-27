@@ -9,6 +9,8 @@ import (
 
 	"github.com/joyautomation/nautilus/internal/stproject"
 	"github.com/joyautomation/nautilus/lang/fbd"
+	"github.com/joyautomation/nautilus/lang/ld"
+	"github.com/joyautomation/nautilus/lang/sfc"
 	"github.com/joyautomation/nautilus/lang/st"
 )
 
@@ -47,7 +49,7 @@ func runCheck(args []string) int {
 				}
 				return nil
 			}
-			if ext := strings.ToLower(filepath.Ext(path)); ext == ".st" || ext == ".fbd" {
+			if ext := strings.ToLower(filepath.Ext(path)); ext == ".st" || ext == ".fbd" || ext == ".ld" || ext == ".sfc" {
 				files = append(files, path)
 			}
 			return nil
@@ -59,7 +61,7 @@ func runCheck(args []string) int {
 	}
 
 	if len(files) == 0 {
-		fmt.Fprintln(os.Stderr, "nautilus check: no .st or .fbd files found")
+		fmt.Fprintln(os.Stderr, "nautilus check: no .st, .fbd, .ld, or .sfc files found")
 		return 0
 	}
 
@@ -71,16 +73,71 @@ func runCheck(args []string) int {
 			return 2
 		}
 		source := string(src)
-		// FBD compiles by transpiling to ST, then it's checked exactly like an
-		// .st file; the transpiler's line map projects diagnostic positions
-		// back onto the .fbd source.
+		// Graphical languages compile by transpiling toward ST — LD to the
+		// FBD netlist, FBD to ST — then check exactly like an .st file; the
+		// composed line maps project diagnostic positions back onto the
+		// original source.
 		var lineMap []int
-		if strings.EqualFold(filepath.Ext(f), ".fbd") {
+		if strings.EqualFold(filepath.Ext(f), ".sfc") {
+			// SFC transpiles directly to ST (a sibling of the LD/FBD hops,
+			// not a stage in their chain — docs/design/sfc.md §3). The
+			// structural checks of §5.1 run for real here; the ST-level
+			// hop (sfc.TranspileWithLines) is a follow-on slice's
+			// deliverable and errors cleanly until it lands.
+			prog, perr := sfc.Parse(source)
+			if perr != nil {
+				bad++
+				fmt.Printf("%s: %s\n", f, perr.Error())
+				continue
+			}
+			hasErr := false
+			for _, d := range sfc.Check(prog) {
+				fmt.Printf("%s:%d:%d: %s: %s\n", f, d.Pos.Line, d.Pos.Col, d.Severity, d.Message)
+				if d.Severity == sfc.SeverityError {
+					hasErr = true
+				}
+			}
+			if hasErr {
+				bad++
+				continue
+			}
+			stSrc, lm, terr := sfc.TranspileWithLines(source)
+			if terr != nil {
+				bad++
+				fmt.Printf("%s: %s\n", f, terr.Error())
+				continue
+			}
+			source, lineMap = stSrc, lm
+		}
+		if strings.EqualFold(filepath.Ext(f), ".ld") {
+			fbdSrc, lm, terr := ld.TranspileWithLines(source)
+			if terr != nil {
+				bad++
+				fmt.Printf("%s: %s\n", f, terr.Error())
+				continue
+			}
+			source, lineMap = fbdSrc, lm
+		}
+		// After the LD hop the source always carries an FBD block. SFC is
+		// not in this chain — it transpiled directly to ST above.
+		if strings.EqualFold(filepath.Ext(f), ".fbd") || strings.EqualFold(filepath.Ext(f), ".ld") {
 			stSrc, lm, terr := fbd.TranspileWithLines(source)
 			if terr != nil {
 				bad++
 				fmt.Printf("%s: %s\n", f, terr.Error())
 				continue
+			}
+			// Compose: ST line → FBD line → (for .ld) LD line.
+			if lineMap != nil {
+				composed := make([]int, len(lm))
+				for i, fbdLine := range lm {
+					if fbdLine >= 1 && fbdLine <= len(lineMap) {
+						composed[i] = lineMap[fbdLine-1]
+					} else {
+						composed[i] = 1
+					}
+				}
+				lm = composed
 			}
 			source, lineMap = stSrc, lm
 		}
