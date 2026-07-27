@@ -5,15 +5,13 @@ control and supervisory systems the way software engineers already work —
 version control, tests, CI/CD, code review — instead of inside a proprietary
 vendor IDE.
 
-Write your control logic in **IEC 61131-3 Structured Text** (portable, and the
-same language [tentacle](https://github.com/joyautomation) runs) or in **native
-Go**. Host it on a deterministic scan loop. Bring your own field I/O,
-redundancy, historian, and HMI through small, documented interfaces. Develop it
-in **VS Code**. Ship it like any other binary.
+Write your control logic in **IEC 61131-3** — Structured Text, Ladder, or
+Function Block, the portable standard languages — or in **native Go**. Host it
+on a deterministic scan loop. Bring your own field I/O, redundancy, historian,
+and HMI through small, documented interfaces. Develop it in **VS Code**. Ship
+it like any other binary.
 
-> nautilus is the high-code sibling to tentacle's low-code, general-purpose
-> platform: same IEC substrate, different authoring surface — for teams that
-> want the libraries and the seams, not a walled garden.
+> For teams that want the libraries and the seams, not a walled garden.
 
 ## Why
 

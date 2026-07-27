@@ -1,0 +1,39 @@
+---
+title: nautilus
+description: SCADA as software — a Go + SvelteKit toolkit for building industrial control and supervisory systems.
+template: splash
+hero:
+  tagline: SCADA as software. Build industrial control and supervisory systems the way software engineers already work — version control, tests, CI/CD, code review — instead of inside a proprietary vendor IDE.
+  actions:
+    - text: Get started
+      link: /getting-started/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/joyautomation/nautilus
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid stagger>
+  <Card title="Three IEC languages, one program model" icon="seti:plan">
+    Structured Text, Ladder, and Function Block — text first, so they diff,
+    review, and merge like code, with full graphical editors in VS Code. All
+    three lower to the same IR.
+  </Card>
+  <Card title="A runtime you can read" icon="rocket">
+    Deterministic scan loop, tag bus, and PLC-style online edits — warm-swap
+    logic on a live controller with retained state carried across. A tiny,
+    pure-stdlib Go core.
+  </Card>
+  <Card title="Talk to real hardware" icon="setting">
+    A pure-Go EtherNet/IP driver for Allen-Bradley Logix with tag browse and
+    UDT import codegen, Sparkplug B publishing, and an io.Driver seam for any
+    bus.
+  </Card>
+  <Card title="An HMI kit for SvelteKit" icon="laptop">
+    Faceplates, trends, and a realtime SSE client — build operator screens the
+    way you build web apps.
+  </Card>
+</CardGrid>
