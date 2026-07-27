@@ -3,6 +3,14 @@
 All notable changes to the **nautilus IEC 61131-3** extension are documented
 here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.16] - 2026-07-27
+
+### Changed
+
+- Marketplace publisher is now **joyauto** (extension ID `joyauto.vscode-iec`).
+  The previous `joyautomation` publisher record was defective on the
+  Marketplace side; installs from the old ID were never possible.
+
 ## [0.9.15] - 2026-07-25
 
 ### Fixed

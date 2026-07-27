@@ -2,7 +2,7 @@
   "name": "vscode-iec",
   "displayName": "nautilus IEC 61131-3",
   "description": "IEC 61131-3 language support for the nautilus SCADA framework: Structured Text (.st), Function Block Diagram (.fbd), Ladder Diagram (.ld) and Sequential Function Chart (.sfc) with syntax highlighting, compile diagnostics, go-to-definition, live graphical diagram editors, inline live tag values from a running controller, and a graphical HMI mimic editor for *.mimic.json P&ID documents.",
-  "version": "0.9.15",
+  "version": "0.9.16",
   "publisher": "joyauto",
   "license": "Apache-2.0",
   "icon": "icon.png",
@@ -202,7 +202,7 @@
       },
       {
         "command": "nautilus.editComponentPorts",
-        "title": "Nautilus: Edit Component Ports\u2026"
+        "title": "Nautilus: Edit Component Ports…"
       }
     ],
     "menus": {
@@ -283,7 +283,7 @@
         "nautilus.token": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Bearer token for writes to a token-gated controller (matches the controller's `NAUTILUS_TOKEN`). Needed only for online-edit download/rollback against a controller started with a token \u2014 reads and `nautilus pull` never require it. Prefer setting this in workspace settings, not user settings."
+          "markdownDescription": "Bearer token for writes to a token-gated controller (matches the controller's `NAUTILUS_TOKEN`). Needed only for online-edit download/rollback against a controller started with a token — reads and `nautilus pull` never require it. Prefer setting this in workspace settings, not user settings."
         },
         "nautilus.mimic.snapToGrid": {
           "type": "boolean",
@@ -348,7 +348,7 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "Rendering user-authored Svelte components inside the mimic/Component Editor compiles project code with esbuild and the workspace's own toolchain (svelte/compiler, node_modules). This is disabled in untrusted workspaces \u2014 the built-in kit components and placeholder chips still work fully."
+      "description": "Rendering user-authored Svelte components inside the mimic/Component Editor compiles project code with esbuild and the workspace's own toolchain (svelte/compiler, node_modules). This is disabled in untrusted workspaces — the built-in kit components and placeholder chips still work fully."
     }
   },
   "scripts": {
