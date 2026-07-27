@@ -37,6 +37,11 @@ jobs:
       - uses: actions/setup-node@v4
         with: {node-version: '22'}
       - run: npm ci
+      # webview-ui links the hmi package locally (file:../../../hmi), and
+      # its mimic tests import from hmi's dist/ — build it first.
+      - name: Build hmi (webview-ui's local dependency)
+        run: npm ci && npm run package
+        working-directory: hmi
       # webview-ui is a separate npm package (its own lockfile/deps, e.g.
       # the local hmi package the mimic routing tests import) — `npm test`
       # now also runs its pure-logic test files, so its deps must exist too.
