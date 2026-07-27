@@ -13,33 +13,60 @@ import (
 	"os/signal"
 	"time"
 
-	nio "github.com/joyautomation/nautilus/io"
 	"github.com/joyautomation/nautilus/runtime"
 	"github.com/joyautomation/nautilus/server"
 )
 
-//go:embed program.st
+//go:embed program.{{.Language}}
 var program string
+
+{{- if .Plant}}
+
+//go:embed blocks.st
+var blocks string
+{{- end}}
 
 func main() {
 	rt, err := runtime.New(runtime.Options{
 		Program: program,
 {{- if .Plant}}
-		Driver:  NewPlant(), // swap for your field bus (Modbus, OPC-UA, ...)
-		Scan:    100 * time.Millisecond,
-		Inputs:  []string{"LevelPct", "TempC"},
-		Outputs: []string{"PumpRun", "Heater"},
-		DtTag:   "ScanDtS",
-		Seed: nio.Values{
-			"TempSP": 65.0, "Kp": 12.0, "Ki": 0.15,
-			"PumpStartLevel": 40.0, "PumpStopLevel": 75.0,
+		// Libraries hold your reusable FUNCTION_BLOCKs / FUNCTIONs / TYPEs
+		// (blocks.st) — composed ahead of the program exactly as the editor
+		// and CLI tooling compose them, so online edits round-trip.
+		Libraries: []string{blocks},
+		Driver:    NewPlant(), // swap for your field bus (Modbus, OPC-UA, ...)
+		Scan:      100 * time.Millisecond,
+		DtTag:     "ScanDtS",
+		// One entry per tag — its role in the scan, its seed, its HMI docs:
+		//   Input     driver → tag before each scan (must also appear in the
+		//             driver's ReadInputs map)
+		//   Setpoint  exists from scan one; HMI/API-writable
+		//   Output    tag → driver after each scan; Init() any output the
+		//             logic READS (a seal-in latch reads its own coil)
+		Tags: []runtime.TagDef{
+			runtime.Input("LevelPct", runtime.Desc("Tank level"), runtime.Unit("%")),
+			runtime.Input("TempC", runtime.Desc("Tank temperature"), runtime.Unit("°C")),
+			runtime.Setpoint("TempSP", 65.0, runtime.Unit("°C")),
+			runtime.Setpoint("Kp", 12.0),
+			runtime.Setpoint("Ki", 0.15, runtime.Unit("1/s")),
+			runtime.Setpoint("PumpStartLevel", 40.0, runtime.Unit("%")),
+			runtime.Setpoint("PumpStopLevel", 75.0, runtime.Unit("%")),
+			runtime.Output("PumpRun", runtime.Init(false), runtime.Desc("Pump run command")),
+			runtime.Output("Heater", runtime.Unit("%")),
 		},
 {{- else}}
 		Driver:  NewDriver(), // implement ReadInputs/WriteOutputs in driver.go
 		Scan:    100 * time.Millisecond,
-		Inputs:  []string{"Sensor"},
-		Outputs: []string{"Actuator"},
-		Seed:    nio.Values{"Setpoint": 50.0},
+		// One entry per tag — its role in the scan, its seed, its HMI docs.
+		Tags: []runtime.TagDef{
+			runtime.Input("Sensor"),            // driver → tag each scan
+			runtime.Setpoint("Setpoint", 50.0), // exists from scan one
+{{- if eq .Language "ld"}}
+			runtime.Output("Alarm"),            // tag → driver each scan
+{{- else}}
+			runtime.Output("Actuator"),         // tag → driver each scan
+{{- end}}
+		},
 {{- end}}
 	})
 	if err != nil {

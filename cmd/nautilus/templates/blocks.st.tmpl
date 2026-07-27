@@ -1,0 +1,29 @@
+(* Reusable function blocks for this project. Library files hold TYPE /
+   FUNCTION / FUNCTION_BLOCK declarations — IEC 61131-3's unit of logic
+   reuse — and the runtime composes them ahead of program.st (see
+   Libraries in main.go). Blocks authored here are callable from any IEC
+   language: the ST program, an FBD diagram, ... *)
+
+FUNCTION_BLOCK PI
+(* PI controller with anti-windup clamp: OUT = KP*e + integral, both the
+   integral and the output clamped to 0..100. Instantiate one per loop —
+   each instance keeps its own integral, retained across scans and across
+   online edits. *)
+VAR_INPUT
+    SP : REAL; (* setpoint *)
+    PV : REAL; (* process value *)
+    KP : REAL; (* proportional gain *)
+    KI : REAL; (* integral gain, 1/s *)
+    DT : REAL; (* seconds since last scan *)
+END_VAR
+VAR_OUTPUT
+    OUT : REAL; (* 0..100 *)
+END_VAR
+VAR
+    integral : REAL;
+    err      : REAL;
+END_VAR
+err := SP - PV;
+integral := LIMIT(0.0, integral + KI * err * DT, 100.0);
+OUT := LIMIT(0.0, KP * err + integral, 100.0);
+END_FUNCTION_BLOCK

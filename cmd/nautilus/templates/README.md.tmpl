@@ -16,6 +16,12 @@ go run .      # scan loop + tag API on http://localhost:8080
 - `program.st` is the control logic. With the **nautilus IEC 61131-3**
   VS Code extension you get compile diagnostics as you type, and inline
   live tag values while the controller runs.
+{{- if .Plant}}
+- `blocks.st` holds reusable FUNCTION_BLOCKs (the PI controller lives
+  there). Add your own blocks and instantiate them from the program —
+  each instance keeps its own retained state. `main.go` composes it via
+  `Libraries`; the editor and `nautilus check` pick it up automatically.
+{{- end}}
 - `go test ./...` runs the program's acceptance tests
   (`program_test.go`) — deterministic scans against a loopback driver.
 - `nautilus check .` compiles the ST headlessly (CI runs this).

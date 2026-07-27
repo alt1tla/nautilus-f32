@@ -20,10 +20,12 @@ var templates embed.FS
 // scaffold is the answer set the prompts (or flags) fill in; every template
 // renders against it.
 type scaffold struct {
-	Name    string // directory + program name, kebab-ish
-	Module  string // Go module path
-	Program string // PROGRAM identifier derived from Name (PascalCase)
+	Name     string // directory + program name, kebab-ish
+	Module   string // Go module path
+	Program  string // PROGRAM identifier derived from Name (PascalCase)
+	Language string // program language: st, fbd, or ld
 
+	NoGo   bool // manifest project (nautilus.yaml + IEC files, no Go)
 	Plant  bool // simulated plant driver + richer example program
 	CI     bool // GitHub Actions workflow
 	VSCode bool // .vscode extension recommendation + runtime URL
@@ -44,6 +46,8 @@ var identRE = regexp.MustCompile(`[^A-Za-z0-9]+`)
 func runNew(args []string) int {
 	fs := flag.NewFlagSet("new", flag.ContinueOnError)
 	module := fs.String("module", "", "Go module path (default: name)")
+	language := fs.String("language", "st", "program language: st, fbd, ld, or sfc (fbd/ld/sfc scaffold the blank program)")
+	noGo := fs.Bool("no-go", false, "manifest project: nautilus.yaml + IEC files, run with `nautilus run` — no Go")
 	noInput := fs.Bool("no-input", false, "accept defaults instead of prompting")
 	replace := fs.String("replace", "", "path to a local nautilus checkout; adds a filesystem replace directive so the project builds against it (for contributors, pre-publish)")
 	if err := fs.Parse(args); err != nil {
@@ -64,6 +68,22 @@ func runNew(args []string) int {
 		Name:   name,
 		Module: *module,
 		Plant:  true, CI: true, VSCode: true, Git: true,
+		Language: strings.ToLower(strings.TrimSpace(*language)),
+	}
+	sc.NoGo = *noGo
+	if sc.NoGo {
+		sc.Plant = false // physics/sim is the Go tier
+	}
+	switch sc.Language {
+	case "", "st":
+		sc.Language = "st"
+	case "fbd", "ld", "sfc":
+		// The plant demo program is ST; a graphical-language scaffold
+		// starts from the blank program in that language.
+		sc.Plant = false
+	default:
+		fmt.Fprintln(os.Stderr, "nautilus new: --language must be st, fbd, ld, or sfc")
+		return 2
 	}
 	if *replace != "" {
 		// Absolute, so the directive resolves from the generated project dir
@@ -97,6 +117,20 @@ func runNew(args []string) int {
 		return 1
 	}
 
+	if sc.NoGo {
+		fmt.Printf(`
+  created %s/ — a manifest project, no Go required
+
+  next steps:
+    cd %s
+    nautilus run     # scan loop + dashboard + tag API on http://localhost:8080
+    nautilus build   # emit ./%s — a self-contained controller binary
+
+  open the folder in VS Code with the "nautilus IEC 61131-3" extension for
+  diagnostics, the graphical editors, and live values in program.%s.
+`, sc.Name, sc.Name, sc.Name, sc.Language)
+		return 0
+	}
 	dep := "pulls github.com/joyautomation/nautilus"
 	if sc.Replace != "" {
 		dep = "resolves against " + sc.Replace
@@ -111,8 +145,8 @@ func runNew(args []string) int {
     go test ./...    # the program's acceptance test
 
   open the folder in VS Code with the "nautilus IEC 61131-3" extension for
-  compile diagnostics and live tag values in program.st while it runs.
-`, sc.Name, sc.Name, dep)
+  compile diagnostics and live tag values in program.%s while it runs.
+`, sc.Name, sc.Name, dep, sc.Language)
 	return 0
 }
 
@@ -151,13 +185,24 @@ func prompt(sc *scaffold) error {
 		).
 		Value(&features)
 
+	languageSelect := huh.NewSelect[string]().
+		Title("Program language").
+		Description("All four share the same runtime, tags, and tooling. The plant demo is ST; picking FBD/LD/SFC starts from the blank program.").
+		Options(
+			huh.NewOption("Structured Text (.st)", "st"),
+			huh.NewOption("Function Block Diagram (.fbd)", "fbd"),
+			huh.NewOption("Ladder Diagram (.ld)", "ld"),
+			huh.NewOption("Sequential Function Chart (.sfc)", "sfc"),
+		).
+		Value(&sc.Language)
+
 	groups := []*huh.Group{}
 	if sc.Name == "" {
 		groups = append(groups, huh.NewGroup(nameInput, moduleInput))
 	} else if sc.Module == "" {
 		groups = append(groups, huh.NewGroup(moduleInput))
 	}
-	groups = append(groups, huh.NewGroup(featureSelect))
+	groups = append(groups, huh.NewGroup(languageSelect), huh.NewGroup(featureSelect))
 
 	if err := huh.NewForm(groups...).Run(); err != nil {
 		return err
@@ -171,11 +216,20 @@ func prompt(sc *scaffold) error {
 		return false
 	}
 	sc.Plant, sc.CI, sc.VSCode, sc.Git = has("plant"), has("ci"), has("vscode"), has("git")
+	if sc.Language == "" {
+		sc.Language = "st"
+	}
+	if sc.Language != "st" {
+		sc.Plant = false // the plant demo program is ST-only (for now)
+	}
 	return nil
 }
 
 // write renders the template tree into ./<name>.
 func write(sc *scaffold) error {
+	if sc.Language == "" {
+		sc.Language = "st" // zero-value scaffolds (tests) default to ST
+	}
 	if _, err := os.Stat(sc.Name); err == nil {
 		return fmt.Errorf("%s already exists", sc.Name)
 	}
@@ -186,15 +240,21 @@ func write(sc *scaffold) error {
 		src, dst string
 		on       bool
 	}{
-		{"go.mod.tmpl", "go.mod", true},
-		{"main.go.tmpl", "main.go", true},
-		{"program_test.go.tmpl", "program_test.go", true},
+		{"go.mod.tmpl", "go.mod", !sc.NoGo},
+		{"main.go.tmpl", "main.go", !sc.NoGo},
+		{"program_test.go.tmpl", "program_test.go", !sc.NoGo},
 		{"gitignore.tmpl", ".gitignore", true},
-		{"README.md.tmpl", "README.md", true},
+		{"README.md.tmpl", "README.md", !sc.NoGo},
+		{"README_nogo.md.tmpl", "README.md", sc.NoGo},
+		{"nautilus.yaml.tmpl", "nautilus.yaml", sc.NoGo},
 		{"program_plant.st.tmpl", "program.st", sc.Plant},
+		{"blocks.st.tmpl", "blocks.st", sc.Plant},
+		{"program_blank.fbd.tmpl", "program.fbd", !sc.Plant && sc.Language == "fbd"},
+		{"program_blank.ld.tmpl", "program.ld", !sc.Plant && sc.Language == "ld"},
+		{"program_blank.sfc.tmpl", "program.sfc", !sc.Plant && sc.Language == "sfc"},
 		{"plant.go.tmpl", "plant.go", sc.Plant},
-		{"program_blank.st.tmpl", "program.st", !sc.Plant},
-		{"driver.go.tmpl", "driver.go", !sc.Plant},
+		{"program_blank.st.tmpl", "program.st", !sc.Plant && sc.Language == "st"},
+		{"driver.go.tmpl", "driver.go", !sc.Plant && !sc.NoGo},
 		{"ci.yml.tmpl", ".github/workflows/ci.yml", sc.CI},
 		{"extensions.json.tmpl", ".vscode/extensions.json", sc.VSCode},
 		{"settings.json.tmpl", ".vscode/settings.json", sc.VSCode},

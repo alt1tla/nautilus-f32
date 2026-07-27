@@ -11,6 +11,14 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.24"
+{{- if .NoGo}}
+      - name: install nautilus
+        run: go install github.com/joyautomation/nautilus/cmd/nautilus@latest
+      - name: check control logic
+        run: nautilus check .
+      - name: build controller binary
+        run: nautilus build -o {{.Name}}
+{{- else}}
       - name: vet
         run: go vet ./...
       - name: check control logic
@@ -19,3 +27,4 @@ jobs:
         run: go test ./...
       - name: build
         run: go build ./...
+{{- end}}

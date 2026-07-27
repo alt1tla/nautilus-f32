@@ -18,14 +18,20 @@ func newTestRT(t *testing.T, drv *nio.Memory) *runtime.Runtime {
 		Program: program,
 		Driver:  drv,
 {{- if .Plant}}
-		Inputs:  []string{"LevelPct", "TempC"},
-		Outputs: []string{"PumpRun", "Heater"},
-		DtTag:   "ScanDtS",
+		// The same composition as main.go: blocks.st ahead of program.st.
+		Libraries: []string{blocks},
+		Inputs:    []string{"LevelPct", "TempC"},
+		Outputs:   []string{"PumpRun", "Heater"},
+		DtTag:     "ScanDtS",
 		Seed: nio.Values{
 			"TempSP": 65.0, "Kp": 12.0, "Ki": 0.15,
 			"PumpStartLevel": 40.0, "PumpStopLevel": 75.0,
 			"LevelPct": 60.0, "TempC": 60.0,
 		},
+{{- else if eq .Language "ld"}}
+		Inputs:  []string{"Sensor"},
+		Outputs: []string{"Alarm"},
+		Seed:    nio.Values{"Setpoint": 50.0, "Sensor": 0.0},
 {{- else}}
 		Inputs:  []string{"Sensor"},
 		Outputs: []string{"Actuator"},
@@ -80,6 +86,24 @@ func TestHeaterRespondsToError(t *testing.T) {
 	rt.Scan()
 	if h := rt.Tags().Real("Heater"); h != 0 {
 		t.Fatalf("heater should clamp to 0 when hot, got %v", h)
+	}
+}
+{{- else if eq .Language "ld"}}
+
+func TestAlarmFollowsSetpoint(t *testing.T) {
+	drv := nio.NewMemory()
+	rt := newTestRT(t, drv)
+
+	drv.WriteOutputs(nio.Values{"Sensor": 20.0})
+	rt.Scan()
+	if rt.Tags().Bool("Alarm") {
+		t.Fatal("Alarm must be clear below the setpoint")
+	}
+
+	drv.WriteOutputs(nio.Values{"Sensor": 90.0})
+	rt.Scan()
+	if !rt.Tags().Bool("Alarm") {
+		t.Fatal("Alarm must trip above the setpoint")
 	}
 }
 {{- else}}

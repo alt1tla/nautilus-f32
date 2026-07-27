@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/joyautomation/nautilus/internal/stproject"
+	"github.com/joyautomation/nautilus/lang/fbd"
+	"github.com/joyautomation/nautilus/lang/ld"
 	"github.com/joyautomation/nautilus/lang/st"
 )
 
@@ -23,7 +26,7 @@ func TestScaffoldVariants(t *testing.T) {
 			name: "plant with everything",
 			sc:   scaffold{Name: "plant-proj", Module: "example.com/plant-proj", Program: "PlantProj", Plant: true, CI: true, VSCode: true},
 			want: []string{
-				"go.mod", "main.go", "plant.go", "program.st", "program_test.go",
+				"go.mod", "main.go", "plant.go", "program.st", "blocks.st", "program_test.go",
 				".github/workflows/ci.yml", ".vscode/extensions.json", ".vscode/settings.json",
 				"README.md", ".gitignore",
 			},
@@ -34,8 +37,20 @@ func TestScaffoldVariants(t *testing.T) {
 			sc:   scaffold{Name: "blank-proj", Module: "blank-proj", Program: "BlankProj", Plant: false, CI: false, VSCode: false},
 			want: []string{"go.mod", "main.go", "driver.go", "program.st", "program_test.go"},
 			absent: []string{
-				"plant.go", ".github/workflows/ci.yml", ".vscode/extensions.json",
+				"plant.go", "blocks.st", ".github/workflows/ci.yml", ".vscode/extensions.json",
 			},
+		},
+		{
+			name:   "ladder program",
+			sc:     scaffold{Name: "ld-proj", Module: "ld-proj", Program: "LdProj", Language: "ld"},
+			want:   []string{"go.mod", "main.go", "driver.go", "program.ld", "program_test.go"},
+			absent: []string{"program.st", "program.fbd", "plant.go", "blocks.st"},
+		},
+		{
+			name:   "fbd program",
+			sc:     scaffold{Name: "fbd-proj", Module: "fbd-proj", Program: "FbdProj", Language: "fbd"},
+			want:   []string{"go.mod", "main.go", "driver.go", "program.fbd", "program_test.go"},
+			absent: []string{"program.st", "program.ld", "plant.go"},
 		},
 	}
 
@@ -67,12 +82,37 @@ func TestScaffoldVariants(t *testing.T) {
 				}
 			}
 
-			// The generated control program must compile.
-			src, err := os.ReadFile(filepath.Join(dir, tc.sc.Name, "program.st"))
+			// The generated control program must compile — composed with
+			// its library file, exactly as main.go composes it. Graphical
+			// languages take their transpile hops first (ld → fbd → st).
+			lang := tc.sc.Language
+			if lang == "" {
+				lang = "st"
+			}
+			src, err := os.ReadFile(filepath.Join(dir, tc.sc.Name, "program."+lang))
 			if err != nil {
 				t.Fatal(err)
 			}
-			prog, err := st.Parse(string(src))
+			composed := string(src)
+			if lang == "ld" {
+				f, err := ld.Transpile(composed)
+				if err != nil {
+					t.Fatalf("generated program.ld doesn't transpile: %v", err)
+				}
+				composed = f
+				lang = "fbd"
+			}
+			if lang == "fbd" {
+				s, err := fbd.Transpile(composed)
+				if err != nil {
+					t.Fatalf("generated program doesn't transpile from fbd: %v", err)
+				}
+				composed = s
+			}
+			if blocks, err := os.ReadFile(filepath.Join(dir, tc.sc.Name, "blocks.st")); err == nil {
+				composed = stproject.Join([]string{string(blocks)}, composed)
+			}
+			prog, err := st.Parse(composed)
 			if err != nil {
 				t.Fatalf("generated program.st doesn't parse: %v", err)
 			}

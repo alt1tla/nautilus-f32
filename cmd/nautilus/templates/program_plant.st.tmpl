@@ -18,8 +18,7 @@ VAR_EXTERNAL
     Heater         : REAL;
 END_VAR
 VAR
-    integral : REAL;
-    err      : REAL;
+    tic : PI; (* from blocks.st — instance state (the integral) is retained *)
 END_VAR
 
 (* P-101: level hysteresis latch *)
@@ -29,9 +28,7 @@ ELSIF LevelPct >= PumpStopLevel THEN
     PumpRun := FALSE;
 END_IF;
 
-(* TIC-101: temperature PI with anti-windup clamp *)
-err := TempSP - TempC;
-integral := integral + Ki * err * ScanDtS;
-integral := LIMIT(0.0, integral, 100.0);
-Heater := LIMIT(0.0, Kp * err + integral, 100.0);
+(* TIC-101: temperature PI — the controller itself lives in blocks.st *)
+tic(SP := TempSP, PV := TempC, KP := Kp, KI := Ki, DT := ScanDtS);
+Heater := tic.OUT;
 END_PROGRAM

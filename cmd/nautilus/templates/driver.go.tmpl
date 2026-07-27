@@ -22,17 +22,33 @@ func NewDriver() *Driver {
 func (d *Driver) ReadInputs() (nio.Values, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+{{- if eq .Language "ld"}}
+	// TODO: read your instruments. The stub sweeps 0..100 so the alarm
+	// rung exercises both states while you watch live values.
+	d.actuator += 1.0
+	if d.actuator > 100 {
+		d.actuator = 0
+	}
+	return nio.Values{"Sensor": d.actuator}, nil
+{{- else}}
 	// TODO: read your instruments. The stub feeds the actuator back in so
 	// the loop settles visibly at Setpoint/2.
 	return nio.Values{"Sensor": d.actuator}, nil
+{{- end}}
 }
 
 // WriteOutputs receives the controller's commanded outputs by tag name.
 func (d *Driver) WriteOutputs(v nio.Values) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+{{- if eq .Language "ld"}}
+	if a, ok := v["Alarm"].(bool); ok {
+		_ = a // TODO: drive your annunciator
+	}
+{{- else}}
 	if a, ok := v["Actuator"].(float64); ok {
 		d.actuator = a // TODO: drive your actuators
 	}
+{{- end}}
 	return nil
 }

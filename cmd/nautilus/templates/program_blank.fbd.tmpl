@@ -1,0 +1,15 @@
+PROGRAM {{.Program}}
+(* Your control logic as an FBD netlist. Wires (name = expr) feed blocks;
+   coils (name := expr) write tags. Open the diagram: VS Code → right-click
+   program.fbd → "Open With → FBD Diagram". VAR_EXTERNAL tags are bound by
+   the runtime each scan; VAR is program state, retained across scans. *)
+VAR_EXTERNAL
+    Sensor   : REAL;  (* field input — {{if .NoGo}}bound by the driver in nautilus.yaml{{else}}see driver.go{{end}} *)
+    Setpoint : REAL;  (* operator value — {{if .NoGo}}declared in nautilus.yaml{{else}}seeded in main.go{{end}} *)
+    Actuator : REAL;  (* field output *)
+END_VAR
+FBD
+  w_err = SUB(Setpoint, Sensor)
+  Actuator := LIMIT(0.0, w_err, 100.0)
+END_FBD
+END_PROGRAM

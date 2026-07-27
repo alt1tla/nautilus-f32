@@ -1,0 +1,20 @@
+# {{.Name}}
+
+A [nautilus](https://github.com/joyautomation/nautilus) controller — IEC
+61131-3 logic, run and shipped by the `nautilus` CLI. No Go in this
+project: the logic is `program.{{.Language}}`, the wiring is
+`nautilus.yaml`.
+
+```sh
+nautilus run        # scan loop + dashboard + tag API on http://localhost:8080
+nautilus check      # compile (CI gate)
+nautilus build      # emit ./{{.Name}} — a self-contained controller binary
+```
+
+Open the folder in VS Code with the **nautilus IEC 61131-3** extension for
+diagnostics, the graphical FBD/ladder editors, live tag values, and
+online edits against the running controller.
+
+When you need custom field buses, simulation physics, or Go tests, this
+same project grows into the Go library form: `nautilus new` (without
+`--no-go`) scaffolds it, and everything here carries over.
