@@ -48,6 +48,7 @@
 		flex: none;
 		padding: 7px 12px;
 		border: none;
+		border-radius: 0;
 		border-bottom: 2px solid transparent;
 		background: transparent;
 		color: var(--muted, #8b949e);

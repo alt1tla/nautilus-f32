@@ -86,6 +86,13 @@
 		box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
 		animation: rise 0.14s ease-out;
 	}
+	/* Faceplates that opt a child into .faceplate-scroll have content tall
+	   enough to scroll — pin those to the max height so switching tabs
+	   doesn't resize the dialog underfoot. Faceplates without a scroll
+	   region keep sizing to their content. */
+	.plate:has(:global(.faceplate-scroll)) {
+		height: min(85vh, 720px);
+	}
 	@keyframes rise {
 		from {
 			opacity: 0;
@@ -176,7 +183,11 @@
 	   stay pinned in view. */
 	.body > :global(.faceplate-scroll) {
 		flex: 1 1 auto;
-		min-height: 0;
+		/* A real floor, not 0: on short viewports the fixed rows above would
+		   otherwise squeeze this region to a few px and the active tab becomes
+		   unusable. Once the floor is hit the body's own overflow-y takes over
+		   and the whole modal content scrolls instead. */
+		min-height: 160px;
 		overflow-y: auto;
 	}
 </style>
