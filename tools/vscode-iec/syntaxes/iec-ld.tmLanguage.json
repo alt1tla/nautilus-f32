@@ -1,0 +1,27 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "IEC 61131-3 Ladder Diagram",
+  "scopeName": "source.iec-ld",
+  "patterns": [
+    {
+      "name": "keyword.control.iec-ld",
+      "match": "(?i)\\b(LD|END_LD|RUNG)\\b"
+    },
+    {
+      "comment": "coils: ( Name ), ( S Name ), ( R Name )",
+      "name": "entity.name.function.coil.iec-ld",
+      "match": "\\(\\s*(?:(?i:[SR])\\s+)?[A-Za-z_][A-Za-z0-9_]*(?:\\[[^\\]]*\\]|\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*\\)"
+    },
+    {
+      "comment": "NC contact prefix",
+      "name": "keyword.operator.contact.iec-ld",
+      "match": "/(?=[A-Za-z_])"
+    },
+    {
+      "comment": "branch rails",
+      "name": "keyword.operator.branch.iec-ld",
+      "match": "[\\[\\]|]"
+    },
+    { "include": "source.iec-st" }
+  ]
+}
