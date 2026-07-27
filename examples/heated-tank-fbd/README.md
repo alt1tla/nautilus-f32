@@ -7,6 +7,20 @@ back through a retained variable, and a `TON` delays the low-temperature
 alarm. The netlist transpiles through `lang/fbd` at startup and runs on the
 same runtime — one compiler, two source languages.
 
+The project is deliberately shaped like a real multi-program controller:
+
+- **`program.fbd`** — the `Main` task, 10 Hz, owns field I/O. Includes a
+  `SEL` block choosing between the normal and eco setpoints.
+- **`reports.fbd`** — a second program on its own 1 Hz task (`Tasks` in
+  `main.go`), computing operator-facing values on the shared tag store:
+  an **array** shift register (`TempHist[1..4]`), a rolling average
+  through an extensible `ADD`, a **user function block** call, and a
+  status **string** built with `CONCAT` / `TRUNC` / `INT_TO_STRING` /
+  `SEL`.
+- **`blocks.st`** — ST-authored `FUNCTION_BLOCK RateOfChange`, composed
+  via `Libraries` and instantiated from the FBD diagram like a built-in
+  `TON`. Author blocks once, call them from any IEC language.
+
 ## Run it
 
 ```sh
@@ -48,6 +62,34 @@ component for it.
    ```sh
    nautilus check examples/heated-tank-fbd     # compile diagnostics
    nautilus fbd graph examples/heated-tank-fbd/program.fbd | jq .  # render model
+   ```
+
+## Try the newer features
+
+1. **Tasks** — the dashboard's *Scan diagnostics* section now shows a
+   **tasks table**: `main` at 100 ms beside `reports` at 1000 ms, each
+   with its own scan count and fault column. `GET /api/program` lists
+   both programs.
+2. **Arrays in the diagram** — open `reports.fbd` and its preview: the
+   shift register renders as `TempHist[n]` chips and coils, and reading
+   the element its own coil wrote draws a feedback wire. Double-click an
+   element chip to retarget it (`TempHist[2]` → `TempHist[3]` — the
+   picker accepts accessor text).
+3. **User FBs from FBD** — the `r1 : RateOfChange(...)` block in the
+   diagram is authored in `blocks.st`. Change its math (say, per-second
+   instead of per-minute), download, and the instance's retained `prev`
+   carries across the swap.
+4. **Strings + selection** — watch the `Status` tag in the dashboard tag
+   table: `tank 59 degC — ok`, flipping to `LOW TEMP` with the alarm.
+5. **Per-task online edits** — with `reports.fbd` open, change the
+   average window math and run "nautilus: Download Program to
+   Controller": the edit routes to the `reports` task by its `PROGRAM`
+   name; `Main` keeps running untouched. `nautilus pull` reconciles both
+   programs back into these files.
+6. **Eco mode (SEL)** — flip it live and watch the PI retarget:
+
+   ```sh
+   curl -X POST localhost:8080/api/tags -d '{"name": "EcoMode", "value": true}'
    ```
 
 ## Poke the plant

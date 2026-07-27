@@ -1,0 +1,85 @@
+/* Design tokens for the FBD webview: every VS Code theme variable we use,
+   named for its ROLE and declared exactly once — components consume the
+   --nx-* token, never a raw --vscode-* var, so fallbacks can't drift and a
+   remap (or a non-VS-Code harness) only touches this file.
+
+   Also home to the few genuinely shared chrome classes (.nx-input,
+   .nx-pill): global on purpose — they're cross-component vocabulary, not
+   component style. */
+
+:root {
+	/* type */
+	--nx-font: var(--vscode-font-family, sans-serif);
+	--nx-mono: var(--vscode-editor-font-family, monospace);
+
+	/* surfaces */
+	--nx-bg: var(--vscode-editor-background, #1e1e1e);
+	--nx-panel-bg: var(--vscode-editorWidget-background, #252526);
+	--nx-input-bg: var(--vscode-input-background, #3c3c3c);
+
+	/* ink */
+	--nx-ink: var(--vscode-editor-foreground, #d4d4d4); /* diagram/monospace ink */
+	--nx-ui-ink: var(--vscode-foreground, #ccc); /* chrome/UI ink */
+	--nx-input-ink: var(--vscode-input-foreground, #ccc);
+	--nx-muted: var(--vscode-descriptionForeground, #888);
+	--nx-comment: var(--vscode-editorLineNumber-foreground, #6a9955);
+
+	/* lines & emphasis */
+	--nx-border: var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.4));
+	--nx-accent: var(--vscode-focusBorder, #58a6ff);
+	--nx-blue: var(--vscode-charts-blue, #58a6ff);
+
+	/* status */
+	--nx-ok: var(--vscode-charts-green, #64d88a);
+	--nx-warn: var(--vscode-editorWarning-foreground, #d7a021);
+	--nx-err: var(--vscode-errorForeground, #f48771);
+	--nx-err-bg: var(--vscode-inputValidation-errorBackground, rgba(200, 60, 60, 0.12));
+
+	/* diff */
+	--nx-added: var(--vscode-gitDecoration-addedResourceForeground, #2ea043);
+	--nx-removed: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
+	--nx-changed: var(--vscode-gitDecoration-modifiedResourceForeground, #d7a021);
+
+	/* interaction */
+	--nx-hover: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.15));
+	--nx-sel-bg: var(--vscode-list-activeSelectionBackground, rgba(88, 166, 255, 0.25));
+	--nx-sel-ink: var(--vscode-list-activeSelectionForeground, #fff);
+	--nx-btn-bg: var(--vscode-button-background, #2ea043);
+	--nx-btn-ink: var(--vscode-button-foreground, #fff);
+
+	/* effects */
+	--nx-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+}
+
+/* A text input, anywhere: palette fields, float editors, suggest boxes. */
+.nx-input {
+	box-sizing: border-box;
+	font-family: var(--nx-mono);
+	font-size: 12px;
+	padding: 2px 6px;
+	border-radius: 3px;
+	background: var(--nx-input-bg);
+	color: var(--nx-input-ink);
+	border: 1px solid var(--nx-border);
+	outline: none;
+}
+.nx-input:focus {
+	border-color: var(--nx-accent);
+}
+
+/* A live-value pill: green while frames flow, grey once the stream goes
+   stale. Size/placement stay with the component; color chrome lives here. */
+.nx-pill {
+	font-weight: 600;
+	border-radius: 5px;
+	white-space: nowrap;
+	color: var(--nx-ok);
+	/* Opaque: pills sit over wires, so lines must not bleed through. */
+	background: color-mix(in srgb, var(--nx-ok) 13%, var(--nx-bg));
+	border: 1px solid color-mix(in srgb, var(--nx-ok) 38%, transparent);
+}
+.nx-pill.off {
+	color: var(--nx-muted);
+	background: color-mix(in srgb, var(--nx-muted) 12%, var(--nx-bg));
+	border-color: color-mix(in srgb, var(--nx-muted) 32%, transparent);
+}

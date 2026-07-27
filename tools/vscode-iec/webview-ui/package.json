@@ -4,8 +4,10 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "build": "vite build",
-    "check": "svelte-check --tsconfig ./tsconfig.json"
+    "build": "vite build && vite build --config vite.mimic.config.ts",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "node --experimental-strip-types --test src/sfc.test.ts src/mimic/ports.test.ts src/mimic/portsGestures.test.ts src/mimic/routing.test.ts src/mimic/pipeDraft.test.ts src/mimic/autoroute.test.ts",
+    "test:gestures": "node --test gesture-harness/gestures.test.mjs"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.2.0",
@@ -15,6 +17,7 @@
     "vite": "^8.1.4"
   },
   "dependencies": {
+    "@joyautomation/nautilus-hmi": "file:../../../hmi",
     "@xyflow/svelte": "^1.6.2"
   }
 }

@@ -118,3 +118,65 @@ test("resolves member and index accessors to the child value", () => {
   assert.equal(typeof partial.value, "object");
   assert.equal(partial.path, "RTU");
 });
+
+test("FUNCTION_BLOCK regions and instance scoping", () => {
+  const src = [
+    "(* libs *)",
+    "FUNCTION_BLOCK RateOfChange",
+    "VAR_INPUT IN : REAL; DT : REAL; END_VAR",
+    "VAR_OUTPUT OUT : REAL; END_VAR",
+    "VAR prev : REAL; END_VAR",
+    "OUT := (IN - prev) / DT;",
+    "prev := IN;",
+    "END_FUNCTION_BLOCK",
+    "",
+    "FUNCTION_BLOCK Other",
+    "VAR x : REAL; END_VAR",
+    "x := 1.0;",
+    "END_FUNCTION_BLOCK",
+  ].join("\n");
+  const { scanFbRegions, scanInstanceDecls, instanceScope } = require("./scan");
+
+  const regions = scanFbRegions(src);
+  assert.deepEqual(
+    regions.map((r: { type: string }) => r.type),
+    ["RateOfChange", "Other"]
+  );
+  // The body slice starts below the header and covers the block.
+  const body = src.slice(regions[0].bodyStart, regions[0].end);
+  assert.ok(body.includes("prev := IN"));
+  assert.ok(!body.includes("FUNCTION_BLOCK RateOfChange"));
+  assert.equal(regions[0].headerLine, 1);
+
+  // Instance declarations across languages: ST VAR blocks and FBD calls.
+  const decls = [
+    "PROGRAM Reports",
+    "VAR r0 : RateOfChange; END_VAR",
+    "FBD",
+    "  r1 : RateOfChange(IN := TempC, DT := RepDtS)",
+    "END_FBD",
+    "END_PROGRAM",
+  ].join("\n");
+  assert.deepEqual(scanInstanceDecls(decls, "RateOfChange"), ["r0", "r1"]);
+  // The FUNCTION_BLOCK header itself is not an instance.
+  assert.deepEqual(scanInstanceDecls(src, "RateOfChange"), []);
+
+  // Scoping: bare members resolve through the instance struct.
+  const vals = new Map<string, unknown>([
+    ["r1", { IN: 54.2, DT: 1.0, OUT: -0.4, prev: 54.6 }],
+    ["tempc", 54.2],
+  ]);
+  const scoped = instanceScope(vals, "r1")!;
+  const sites = scanIdentifiers("OUT := (IN - prev) / DT;", scoped);
+  assert.deepEqual(
+    sites.map((s) => [s.path, s.value]),
+    [
+      ["OUT", -0.4],
+      ["IN", 54.2],
+      ["prev", 54.6],
+      ["DT", 1.0],
+    ]
+  );
+  // A non-struct value scopes to nothing.
+  assert.equal(instanceScope(vals, "tempc"), undefined);
+});

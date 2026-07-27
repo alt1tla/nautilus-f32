@@ -18,8 +18,10 @@
 import * as vscode from "vscode";
 
 export type ProgramInfo = {
+  task?: string; // task name on the controller ("main", or a Task's name)
+  pou?: string; // `PROGRAM <Name>` — the edit-routing identity
   source: string;
-  language?: "st" | "fbd"; // which language the controller's program is in
+  language?: "st" | "fbd" | "ld" | "sfc"; // which language the controller's program is in
   hash: string;
   dirty: boolean;
   editable: boolean;
@@ -27,15 +29,47 @@ export type ProgramInfo = {
   error?: string;
 };
 
+/** The `PROGRAM <Name>` POU name of IEC source, "" if none. Programs on a
+ * multi-task controller are addressed by this name. */
+function pouOf(src: string): string {
+  const m = /^\s*PROGRAM\s+([A-Za-z_][A-Za-z0-9_]*)/m.exec(src);
+  return m ? m[1] : "";
+}
+
 /** Both IEC languages participate in online edits: a project's program file
  * may be .st or .fbd (the runtime accepts and serves either). */
 function isIecLang(languageId: string): boolean {
-  return languageId === "iec-st" || languageId === "iec-fbd";
+  return languageId === "iec-st" || languageId === "iec-fbd" || languageId === "iec-ld";
 }
 
 const REMOTE_SCHEME = "nautilus-controller";
 const LOCAL_SCHEME = "nautilus-workspace";
 const POLL_MS = 3000;
+
+const IEC_FILE = /\.(st|fbd|ld)$/i;
+
+/** The IEC document the user is "in": the active text editor, or — because
+ * the graphical editors are custom editors that never appear in
+ * activeTextEditor — the active tab's custom-editor document. */
+function activeIecUri(): vscode.Uri | undefined {
+  const active = vscode.window.activeTextEditor?.document;
+  if (active && isIecLang(active.languageId) && active.uri.scheme === "file") return active.uri;
+  const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+  if (input instanceof vscode.TabInputCustom && IEC_FILE.test(input.uri.path)) return input.uri;
+  return undefined;
+}
+
+/** Is any IEC surface open — a text editor or one of our diagram tabs? */
+function iecSurfaceVisible(): boolean {
+  if (vscode.window.visibleTextEditors.some((e) => isIecLang(e.document.languageId))) return true;
+  return vscode.window.tabGroups.all.some((g) =>
+    g.tabs.some((t) => t.input instanceof vscode.TabInputCustom && t.input.viewType.startsWith("nautilus."))
+  );
+}
+
+/** How the workspace relates to the running controller — broadcast to the
+ * diagram webviews so divergence is visible where the editing happens. */
+export type SyncState = "sync" | "edit" | "differs" | "offline";
 
 export class OnlineEdit implements vscode.Disposable {
   private status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 89);
@@ -44,7 +78,7 @@ export class OnlineEdit implements vscode.Disposable {
   private localSource = "";
   private disposables: vscode.Disposable[] = [];
 
-  constructor() {
+  constructor(private readonly onState?: (state: SyncState, programUri?: vscode.Uri) => void) {
     this.status.command = "nautilus.program.diff";
     this.timer = setInterval(() => void this.refreshStatus(), POLL_MS);
 
@@ -76,8 +110,17 @@ export class OnlineEdit implements vscode.Disposable {
     return headers;
   }
 
-  private async fetchInfo(): Promise<ProgramInfo | undefined> {
+  /** Fetch a program's info. With a POU name, targets that program on a
+   * multi-task controller; an unknown POU falls back to the main program
+   * so single-program controllers (and renames) keep working. */
+  private async fetchInfo(pou?: string): Promise<ProgramInfo | undefined> {
     try {
+      if (pou) {
+        const res = await fetch(this.runtimeUrl() + "/api/program?pou=" + encodeURIComponent(pou));
+        if (res.ok) return (await res.json()) as ProgramInfo;
+        if (res.status !== 404) return undefined;
+        // 404: no program by that name — fall through to main.
+      }
       const res = await fetch(this.runtimeUrl() + "/api/program");
       if (!res.ok) return undefined;
       return (await res.json()) as ProgramInfo;
@@ -94,13 +137,13 @@ export class OnlineEdit implements vscode.Disposable {
    * prelude (composed minus program body — the split prefix), and the program
    * file's URI + body.
    */
-  private async compose(): Promise<
+  private async compose(quiet = false): Promise<
     { source: string; prelude: string; programFile: string; programUri: vscode.Uri; programBody: string } | undefined
   > {
-    const active = vscode.window.activeTextEditor?.document;
+    const activeUri = activeIecUri();
     let dir: vscode.Uri | undefined;
-    if (active && isIecLang(active.languageId) && active.uri.scheme === "file") {
-      dir = vscode.Uri.joinPath(active.uri, "..");
+    if (activeUri) {
+      dir = vscode.Uri.joinPath(activeUri, "..");
     } else if (vscode.workspace.workspaceFolders?.length) {
       dir = vscode.workspace.workspaceFolders[0].uri;
     }
@@ -108,7 +151,7 @@ export class OnlineEdit implements vscode.Disposable {
 
     const entries = await vscode.workspace.fs.readDirectory(dir);
     const iecFiles = entries
-      .filter(([name, kind]) => kind === vscode.FileType.File && /\.(st|fbd)$/i.test(name))
+      .filter(([name, kind]) => kind === vscode.FileType.File && /\.(st|fbd|ld)$/i.test(name))
       .map(([name]) => name)
       .sort();
 
@@ -122,17 +165,18 @@ export class OnlineEdit implements vscode.Disposable {
     const isProgram = (src: string) => /^\s*PROGRAM\b/m.test(src);
     const programs = iecFiles.filter((n) => isProgram(contents.get(n) ?? ""));
     if (programs.length === 0) {
-      void vscode.window.showErrorMessage("nautilus: no .st or .fbd file with a PROGRAM found in " + dir.fsPath);
+      if (!quiet) void vscode.window.showErrorMessage("nautilus: no .st or .fbd file with a PROGRAM found in " + dir.fsPath);
       return undefined;
     }
     let programFile = programs[0];
     if (programs.length > 1) {
-      const activeName = active ? active.uri.path.split("/").pop() ?? "" : "";
+      const activeName = activeUri ? activeUri.path.split("/").pop() ?? "" : "";
       if (programs.includes(activeName)) programFile = activeName;
       else {
-        void vscode.window.showErrorMessage(
-          `nautilus: multiple program files (${programs.join(", ")}) — open the one to download`
-        );
+        if (!quiet)
+          void vscode.window.showErrorMessage(
+            `nautilus: multiple program files (${programs.join(", ")}) — open the one to download`
+          );
         return undefined;
       }
     }
@@ -158,7 +202,10 @@ export class OnlineEdit implements vscode.Disposable {
   async download(): Promise<void> {
     const composed = await this.compose();
     if (!composed) return;
-    const info = await this.fetchInfo();
+    // Target the program the active file names — on a multi-task
+    // controller the PUT routes by this POU, and the baseHash must come
+    // from the same program or every task download would 409.
+    const info = await this.fetchInfo(pouOf(composed.programBody));
     if (!info) {
       void vscode.window.showErrorMessage(`nautilus: no controller at ${this.runtimeUrl()}`);
       return;
@@ -220,17 +267,18 @@ export class OnlineEdit implements vscode.Disposable {
 
   /** Side-by-side: what the controller runs vs the composed workspace. */
   async diff(): Promise<void> {
-    const info = await this.fetchInfo();
+    const composed = await this.compose();
+    const info = await this.fetchInfo(composed ? pouOf(composed.programBody) : undefined);
     if (!info) {
       void vscode.window.showErrorMessage(`nautilus: no controller at ${this.runtimeUrl()}`);
       return;
     }
-    const composed = await this.compose();
     this.remoteSource = info.source;
     this.localSource = composed?.source ?? "";
     // Name the virtual docs by the controller's language so the diff view
     // gets the right syntax highlighting (.fbd programs diff as .fbd).
-    const ext = info.language === "fbd" ? "fbd" : "st";
+    const ext =
+      info.language === "fbd" || info.language === "ld" || info.language === "sfc" ? info.language : "st";
     const remote = vscode.Uri.parse(`${REMOTE_SCHEME}:/controller.${ext}?${Date.now()}`);
     const local = vscode.Uri.parse(`${LOCAL_SCHEME}:/workspace.${ext}?${Date.now()}`);
     await vscode.commands.executeCommand(
@@ -248,13 +296,13 @@ export class OnlineEdit implements vscode.Disposable {
    * never touched. Shows the change and asks before saving.
    */
   async pull(): Promise<void> {
-    const info = await this.fetchInfo();
+    const composed = await this.compose();
+    if (!composed) return;
+    const info = await this.fetchInfo(pouOf(composed.programBody));
     if (!info) {
       void vscode.window.showErrorMessage(`nautilus: no controller at ${this.runtimeUrl()}`);
       return;
     }
-    const composed = await this.compose();
-    if (!composed) return;
 
     const program = splitProgram(info.source, composed.prelude);
     if (program === undefined) {
@@ -272,7 +320,7 @@ export class OnlineEdit implements vscode.Disposable {
     // Preview the incoming change before writing.
     this.remoteSource = program;
     this.localSource = composed.programBody;
-    const pullExt = composed.programFile.toLowerCase().endsWith(".fbd") ? "fbd" : "st";
+    const pullExt = /\.(fbd|ld)$/i.exec(composed.programFile)?.[1].toLowerCase() ?? "st";
     const remote = vscode.Uri.parse(`${REMOTE_SCHEME}:/incoming.${pullExt}?${Date.now()}`);
     const local = vscode.Uri.parse(`${LOCAL_SCHEME}:/current.${pullExt}?${Date.now()}`);
     await vscode.commands.executeCommand(
@@ -295,10 +343,14 @@ export class OnlineEdit implements vscode.Disposable {
     void this.refreshStatus();
   }
 
-  /** One-step stateful undo of the last download. */
+  /** One-step stateful undo of the last download — of the program the
+   * active file names, on a multi-task controller. */
   async rollback(): Promise<void> {
+    const composed = await this.compose();
+    const pou = composed ? pouOf(composed.programBody) : "";
+    const query = pou ? "?pou=" + encodeURIComponent(pou) : "";
     try {
-      const res = await fetch(this.runtimeUrl() + "/api/program/rollback", { method: "POST", headers: this.writeHeaders() });
+      const res = await fetch(this.runtimeUrl() + "/api/program/rollback" + query, { method: "POST", headers: this.writeHeaders() });
       const body = (await res.json()) as { hash?: string; error?: string };
       if (res.ok) {
         void vscode.window.showInformationMessage(`nautilus: rolled back to ${body.hash}`);
@@ -314,20 +366,21 @@ export class OnlineEdit implements vscode.Disposable {
   // ── sync status ─────────────────────────────────────────────────────────
 
   private async refreshStatus(): Promise<void> {
-    const stVisible = vscode.window.visibleTextEditors.some((e) => isIecLang(e.document.languageId));
-    if (!stVisible) {
+    if (!iecSurfaceVisible()) {
       this.status.hide();
       return;
     }
-    const info = await this.fetchInfo();
+    const composed = await this.compose(true);
+    const info = await this.fetchInfo(composed ? pouOf(composed.programBody) : undefined);
     if (!info) {
       this.status.hide();
+      this.onState?.("offline", composed?.programUri);
       return;
     }
-    const composed = await this.compose();
     const inSync = composed ? normalize(composed.source) === normalize(info.source) : false;
     if (inSync && !info.dirty) {
       this.status.hide(); // running exactly what was deployed — nothing to say
+      this.onState?.("sync", composed?.programUri);
       return;
     }
     if (inSync && info.dirty) {
@@ -335,11 +388,13 @@ export class OnlineEdit implements vscode.Disposable {
       this.status.tooltip =
         "The controller runs your latest download (matches the workspace) but not what it booted with.\n" +
         "Commit the file to keep it — a controller restart reverts. Click to diff.";
+      this.onState?.("edit", composed?.programUri);
     } else {
       this.status.text = "$(cloud-upload) nautilus: program differs";
       this.status.tooltip =
         "The controller is running a different program than the workspace. Click to diff, " +
         "then Download Program to Controller to push.";
+      this.onState?.("differs", composed?.programUri);
     }
     this.status.show();
   }

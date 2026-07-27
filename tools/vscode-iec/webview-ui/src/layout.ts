@@ -49,7 +49,11 @@ export type Placed = FbdNode & {
   outs: string[];
 };
 
-export const EXTENSIBLE = new Set(['AND', 'OR', 'XOR', 'ADD', 'MUL', 'MIN', 'MAX', 'MUX']);
+export const EXTENSIBLE = new Set(['AND', 'OR', 'XOR', 'ADD', 'MUL', 'MIN', 'MAX', 'MUX', 'CONCAT']);
+
+// One line of a comment note — height math here, line-height in FbdNode,
+// and the float editor's textarea sizing all share it.
+export const NOTE_LINE_H = 15;
 
 const PIN_PITCH = 18;
 const TITLE_H = 20;
@@ -92,7 +96,7 @@ export function layout(model: FbdModel): {
     if (n.kind === "comment") {
       const lines = n.label.split("\n");
       const w = Math.ceil(Math.max(60, ...lines.map((l) => textW(l, 11)))) + 20;
-      return { ...n, ins, outs, x: 0, y: 0, w, h: lines.length * 15 + 10, titleH: 0 };
+      return { ...n, ins, outs, x: 0, y: 0, w, h: lines.length * NOTE_LINE_H + 10, titleH: 0 };
     }
     if (n.kind === "input" || n.kind === "coil") {
       return { ...n, ins, outs, x: 0, y: 0, w: Math.ceil(textW(n.label, 12)) + 22, h: CHIP_H, titleH: 0 };

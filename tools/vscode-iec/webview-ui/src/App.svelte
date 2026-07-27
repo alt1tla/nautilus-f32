@@ -19,17 +19,29 @@
 	import FitController from './FitController.svelte';
 	import Palette from './Palette.svelte';
 	import VarsPanel from './VarsPanel.svelte';
+	import FloatEditor from './FloatEditor.svelte';
+	import InstancePanel from './InstancePanel.svelte';
+	import LadderView from './LadderView.svelte';
+	import { diffLd, type LdElement, type LdModel, type RungStatus } from './ladder';
+	import SfcView from './SfcView.svelte';
+	import { diffSfc, type SfcModel } from './sfc';
 	import { layout, type FbdModel, type VarDecl } from './layout';
 	import { mergeDiff } from './diff';
 	import { vscode, postOp } from './vscodeApi';
 	import { setRects, updateRect } from './diagState.svelte';
-	import { live, setLive } from './liveState.svelte';
+	import { live, setLive, setVarBounds } from './liveState.svelte';
 
 	const nodeTypes = { fbd: FbdNode };
 	const edgeTypes = { fbd: FbdEdge };
 
 	let nodes = $state.raw<Node[]>([]);
 	let edges = $state.raw<Edge[]>([]);
+	let ldModel = $state<LdModel | null>(null);
+	let ldStatus = $state<Record<string, RungStatus>>({});
+	let sfcModel = $state<SfcModel | null>(null);
+	// The controller-sync verdict pushed by the extension's status poll —
+	// 'differs'/'edit' render a clickable pill in the toolbar.
+	let syncState = $state('unknown');
 	let title = $state('FBD');
 	let hint = $state(true);
 	let diffing = $state(false);
@@ -43,34 +55,62 @@
 	let selectedCount = $state(0);
 	let knownIds = new Set<string>();
 	type Diag = { line: number; message: string; severity: 'error' | 'warning' };
-	let diags: Diag[] = [];
+	let diags = $state<Diag[]>([]);
 	let problemCount = $state(0);
 	let problemTip = $state('');
 	let lastModel: FbdModel | null = null;
 
-	// Floating text input for constants/renames.
-	let input = $state<{ at: { x: number; y: number; w: number }; value: string; commit: (v: string) => void } | null>(null);
-	let inputEl = $state<HTMLInputElement | null>(null);
-	$effect(() => {
-		if (input && inputEl) {
-			inputEl.focus();
-			inputEl.select();
-		}
-	});
+	// The FB instance inspector: which called instance's live data is open.
+	let inspect = $state<{ name: string; type: string; ins: string[]; outs: string[] } | null>(null);
 
-	function requestInput(init: string, at: { x: number; y: number; w: number }, commit: (v: string) => void) {
-		input = { at, value: init, commit };
-	}
-	function inputKeydown(ev: KeyboardEvent) {
-		ev.stopPropagation();
-		if (ev.key === 'Enter' && input) {
-			const v = input.value.trim();
-			const init = input.commit;
-			input = null;
-			if (v) init(v);
-		} else if (ev.key === 'Escape') {
-			input = null;
+	// The floating in-place editor (constants, renames, comments) — all the
+	// commit/cancel/suggestion mechanics live in FloatEditor.
+	let editor = $state<FloatEditor | null>(null);
+	const tagItems = $derived(varList.map((v) => ({ name: v.name, detail: v.type })));
+
+	// "Used" for the ladder = referenced by any rung: contact/coil operands
+	// (accessor bases), fb instances, and identifiers inside argument lists.
+	function collectLdUsed(m: LdModel): Set<string> {
+		const used = new Set<string>();
+		const walk = (els: LdElement[]) => {
+			for (const e of els) {
+				const base = /^([A-Za-z_][A-Za-z0-9_]*)/.exec(e.ref ?? '');
+				if (base) used.add(base[1].toLowerCase());
+				if (e.inst) used.add(e.inst.toLowerCase());
+				for (const t of e.args?.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? []) used.add(t.toLowerCase());
+				for (const leg of e.legs ?? []) walk(leg);
+			}
+		};
+		for (const r of m.rungs ?? []) {
+			walk(r.elements);
+			walk(r.coils);
 		}
+		return used;
+	}
+
+	// "Used" for the SFC vars panel = every identifier read/written by an
+	// action association's target, a transition condition, or an action
+	// body — the header + logic together (VarsPanel itself can't tell tags
+	// from step/action names, but it only marks unreferenced tags "unused";
+	// a false negative here just costs the badge, never breaks anything).
+	function collectSfcUsed(m: SfcModel): Set<string> {
+		const used = new Set<string>();
+		const words = (s: string) => {
+			for (const w of s.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? []) used.add(w.toLowerCase());
+		};
+		for (const s of m.steps ?? []) for (const a of s.actions ?? []) used.add(a.target.toLowerCase());
+		for (const t of m.trans ?? []) words(t.cond ?? '');
+		for (const a of m.actions ?? []) words(a.body ?? '');
+		return used;
+	}
+
+	function requestInput(
+		init: string,
+		at: { x: number; y: number; w: number },
+		commit: (v: string) => void,
+		opts?: { multiline?: boolean; suggest?: 'tags' | 'types' | 'functions' }
+	) {
+		editor?.open({ init, at, commit, ...opts });
 	}
 
 	function render(model: FbdModel, isDiff: boolean) {
@@ -90,6 +130,9 @@
 		hasPins = model.nodes.some((n) => n.x !== undefined && n.y !== undefined);
 		if (!isDiff) {
 			varList = model.vars ?? [];
+			// Indexed chips (TempHist[2]) need declared array bounds to
+			// resolve their live values.
+			setVarBounds(varList);
 			// Referenced = it became a diagram element (chip, coil, FB instance).
 			usedNames = new Set(
 				model.nodes
@@ -97,6 +140,13 @@
 					.map((n) => n.label.split('.')[0].toLowerCase())
 			);
 		}
+		// VAR_EXTERNAL names (lowercased): chips reading one that has no tag
+		// on the live controller warn — that read faults the scan.
+		const extNames = new Set(
+			(model.vars ?? [])
+				.filter((v) => v.section === 'VAR_EXTERNAL')
+				.map((v) => v.name.toLowerCase())
+		);
 		nodes = placed.map((n) => ({
 			id: n.id,
 			type: 'fbd',
@@ -105,13 +155,31 @@
 				n,
 				problems: n.line ? (diagsByLine.get(n.line) ?? []) : [],
 				editable,
+				extNames,
 				requestInput,
-				onEdit: (a: { type: 'setLiteral' | 'rename' | 'declareVar' | 'setComment'; node: string; value: string }) => {
+				onInspect: (inst: { name: string; type: string; ins: string[]; outs: string[] }) => {
+					inspect = inst;
+					paletteOpen = varsOpen = false;
+				},
+				onEdit: (a: {
+					type: 'setLiteral' | 'rename' | 'setComment' | 'retarget';
+					node: string;
+					value: string;
+					declareType?: string;
+				}) => {
 					if (a.type === 'setLiteral') postOp({ type: 'setLiteral', node: a.node, value: a.value });
 					else if (a.type === 'rename') postOp({ type: 'rename', node: a.node, newName: a.value });
 					else if (a.type === 'setComment') postOp({ type: 'setComment', node: a.node, text: a.value });
-					// declareVar: node carries the variable NAME, value its type.
-					else postOp({ type: 'declareVar', newName: a.node, value: a.value, text: 'VAR_EXTERNAL' });
+					// retarget: value is the tag name; declareType ("Name : TYPE"
+					// in the editor) declares it in the same op.
+					else
+						postOp({
+							type: 'retarget',
+							node: a.node,
+							newName: a.value,
+							value: a.declareType,
+							text: a.declareType ? 'VAR_EXTERNAL' : undefined
+						});
 				}
 			},
 			draggable: editable,
@@ -153,17 +221,81 @@
 	type Msg =
 		| { type: 'model'; model: FbdModel; title?: string }
 		| { type: 'diff'; base: FbdModel; head: FbdModel; title?: string }
+		| { type: 'ldModel'; model: LdModel; title?: string }
+		| { type: 'ldDiff'; base: LdModel; head: LdModel; title?: string }
+		| { type: 'sfcModel'; model: SfcModel; title?: string }
+		| { type: 'sfcDiff'; base: SfcModel; head: SfcModel; title?: string }
 		| { type: 'error'; message: string; title?: string };
 
 	function show(msg: Msg) {
 		if (msg.type === 'model') {
 			title = (msg.model.name ? msg.model.name + ' — ' : '') + (msg.title ?? '');
 			error = '';
+			ldModel = null;
+			sfcModel = null;
 			render(msg.model, false);
 		} else if (msg.type === 'diff') {
 			title = (msg.head.name ? msg.head.name + ' — ' : '') + (msg.title ?? '');
 			error = '';
+			ldModel = null;
+			sfcModel = null;
 			render(mergeDiff(msg.base, msg.head), true);
+		} else if (msg.type === 'ldModel') {
+			// Ladder mode: canonical rung layout, no flow canvas. Array
+			// bounds still come from the header so indexed contacts resolve,
+			// and the header vars feed the SAME vars panel + tag-suggest
+			// dropdowns the FBD editor uses.
+			title = (msg.model.name ? msg.model.name + ' — ' : '') + (msg.title ?? '');
+			error = '';
+			sfcModel = null;
+			varList = (msg.model.vars ?? []) as VarDecl[];
+			setVarBounds(varList);
+			usedNames = collectLdUsed(msg.model);
+			ldModel = msg.model;
+			ldStatus = {};
+			diffing = false;
+			problemCount = diags.length;
+			problemTip = diags.map((d) => `line ${d.line}: ${d.message}`).join('\n');
+		} else if (msg.type === 'ldDiff') {
+			// Ladder diff: base overlaid onto head at rung granularity —
+			// removed rungs splice back in ghosted, changed/added get status
+			// colors. Read-only until the next ldModel arrives.
+			title = msg.title ?? title;
+			error = '';
+			sfcModel = null;
+			const d = diffLd(msg.base, msg.head);
+			ldModel = d.model;
+			ldStatus = d.status;
+			diffing = true;
+			problemCount = 0;
+		} else if (msg.type === 'sfcModel') {
+			// SFC mode: the pure layoutSfc pass (sfc.ts) derives step/
+			// transition geometry from topology; header vars feed the same
+			// vars panel FBD/LD use.
+			title = (msg.model.name ? msg.model.name + ' — ' : '') + (msg.title ?? '');
+			error = '';
+			ldModel = null;
+			varList = (msg.model.vars ?? []) as VarDecl[];
+			setVarBounds(varList);
+			usedNames = collectSfcUsed(msg.model);
+			sfcModel = msg.model;
+			diffing = false;
+			problemCount = diags.length;
+			problemTip = diags.map((d) => `line ${d.line}: ${d.message}`).join('\n');
+		} else if (msg.type === 'sfcDiff') {
+			// SFC diff: diffSfc (sfc.ts) overlays base onto head at
+			// step/transition/action/comment granularity — added/removed/
+			// changed marks, rendered by SfcView with the same
+			// --nx-added/removed/changed palette FBD/Ladder diffs use.
+			// Read-only until the next plain sfcModel arrives.
+			title = (msg.head.name ? msg.head.name + ' — ' : '') + (msg.title ?? '');
+			error = '';
+			ldModel = null;
+			varList = (msg.head.vars ?? []) as VarDecl[];
+			setVarBounds(varList);
+			sfcModel = diffSfc(msg.base, msg.head);
+			diffing = true;
+			problemCount = 0;
 		} else {
 			title = msg.title ?? title;
 			error = msg.message;
@@ -179,6 +311,10 @@
 			values?: Record<string, unknown>;
 		};
 		if (!msg?.type) return;
+		if ((msg as { type: string; state?: string }).type === 'syncState') {
+			syncState = (msg as unknown as { state: string }).state ?? 'unknown';
+			return;
+		}
 		if (msg.type === 'liveValues') {
 			// Store-only update: FbdNode pills react directly, no node rebuild.
 			setLive({ enabled: !!msg.enabled, fresh: !!msg.fresh, values: msg.values ?? {} });
@@ -186,7 +322,14 @@
 		}
 		if (msg.type === 'diagnostics') {
 			diags = msg.diags ?? [];
-			if (!diffing && lastModel) render(lastModel, false);
+			if (ldModel || sfcModel) {
+				// Ladder/SFC mode: LadderView/SfcView join squiggles onto
+				// rungs/steps themselves; just keep the toolbar pill current.
+				problemCount = diags.length;
+				problemTip = diags.map((d) => `line ${d.line}: ${d.message}`).join('\n');
+			} else if (!diffing && lastModel) {
+				render(lastModel, false);
+			}
 			return;
 		}
 		if (msg.type !== 'error') vscode.setState(msg);
@@ -196,6 +339,11 @@
 	if (saved) show(saved);
 	const injected = window.__MODEL__ as FbdModel | undefined;
 	if (injected) show({ type: 'model', model: injected, title: 'harness' });
+	// Browser-harness hook for the SFC webview (mirrors __MODEL__ above):
+	// window.__SFC_MODEL__ renders directly, and every op it posts lands on
+	// window.__POSTED__ via vscodeApi's headless fallback.
+	const injectedSfc = (window as unknown as { __SFC_MODEL__?: SfcModel }).__SFC_MODEL__;
+	if (injectedSfc) show({ type: 'sfcModel', model: injectedSfc, title: 'harness' });
 
 	// ── gestures → ops ──────────────────────────────────────────────────────
 	function onconnect(c: Connection) {
@@ -224,7 +372,13 @@
 	function onbeforedelete({ nodes: sel, edges: selEdges }: { nodes: Node[]; edges: Edge[] }) {
 		for (const n of sel) postOp({ type: 'deleteNode', node: n.id });
 		// A selected edge deletes as a DISCONNECT: FB pins drop their named
-		// arg, extensible inputs shrink, fixed-arity/coil inputs explain.
+		// arg, extensible inputs shrink, fixed-arity pins placehold, coils
+		// revert to floating ghosts. The endpoints' live positions ride
+		// along so a ghost keeps its spot even if it was never dragged.
+		const liveAt = (id: string) => {
+			const n = nodes.find((n) => n.id === id);
+			return n ? [{ node: id, x: Math.round(n.position.x), y: Math.round(n.position.y) }] : [];
+		};
 		for (const e of selEdges) {
 			const d = e.data as { e?: { to: string; toPin?: string; from: string; fromPin?: string } };
 			if (!d?.e) continue;
@@ -233,7 +387,8 @@
 				to: d.e.to,
 				toPin: d.e.toPin ?? '',
 				from: d.e.from,
-				fromPin: d.e.fromPin ?? ''
+				fromPin: d.e.fromPin ?? '',
+				entries: [...liveAt(d.e.from), ...liveAt(d.e.to)]
 			});
 		}
 		return Promise.resolve(false); // ops re-render; never delete locally
@@ -284,7 +439,9 @@
 	let selectedIds: string[] = [];
 	let clipboard: string[] = [];
 	function onkeydown(ev: KeyboardEvent) {
-		if (diffing || input) return;
+		if (diffing) return;
+		// Typing in any editor (float editor, palette field) is never a
+		// canvas shortcut.
 		const el = document.activeElement;
 		if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return;
 		if (!(ev.ctrlKey || ev.metaKey)) return;
@@ -302,11 +459,15 @@
 	<div class="bar">
 		<span class="title">{title}</span>
 		{#if diffing}
-			<span class="legend">
+			<span class="legend" class:ld={!!ldModel}>
 				<span><i class="sw added"></i>added</span>
 				<span><i class="sw removed"></i>removed</span>
 				<span><i class="sw changed"></i>changed</span>
 			</span>
+		{:else if ldModel}
+			<span class="hint">click: select · dblclick: retag / edit args / rename rung · ⊕: insert · Del: delete · N: NO/NC · M: coil mode · B: branch around · Ctrl+C/X/V: copy cut paste</span>
+		{:else if sfcModel}
+			<span class="hint">click: select · dblclick: rename / edit condition / edit action / edit ST body · drag a step body: pin layout · drag its ⊙ handle onto another step: connect · Del: delete (offers cascade for a step with attached transitions) · Esc: cancel connect</span>
 		{:else if hint}
 			<span class="hint">double-click: edit & rename · drag pin→pin: wire (+ adds an input) · drag node: pin layout · Del: delete / disconnect · Ctrl+C/V: copy & paste</span>
 		{/if}
@@ -317,7 +478,20 @@
 		{#if selectedCount > 0}
 			<span class="selcount">{selectedCount} selected</span>
 		{/if}
+		{#if diffing}
+			<button title="Leave the diff and return to the live editable view" onclick={() => vscode.postMessage({ type: 'exitDiff' })}>✕ exit diff</button>
+		{/if}
 		{#if !diffing}
+			{#if syncState === 'differs' || syncState === 'edit'}
+				<button
+					class="syncpill"
+					class:edit={syncState === 'edit'}
+					title={syncState === 'differs'
+						? 'The controller is running a DIFFERENT program than this file — click for a visual diff against live'
+						: 'The controller runs your latest download (matches this file) but not what it booted with — a restart reverts. Click to diff.'}
+					onclick={() => vscode.postMessage({ type: 'diffLive' })}
+				>{syncState === 'differs' ? '≠ controller' : 'online edit'}</button>
+			{/if}
 			{#if live.seen}
 				<!-- same toggle as the text editor's status bar item -->
 				<button
@@ -332,16 +506,43 @@
 					onclick={() => vscode.postMessage({ type: 'toggleLive' })}
 				>{live.enabled ? (live.fresh ? '● live' : '◌ offline') : '○ live off'}</button>
 			{/if}
-			{#if hasPins}
+			{#if hasPins && !ldModel && !sfcModel}
 				<button title="Clear all pinned positions (back to full auto-layout)" onclick={() => postOp({ type: 'clearLayout' })}>auto layout</button>
 			{/if}
 			<button title="All header declarations, including ones the logic doesn't reference yet" onclick={(e) => { e.stopPropagation(); varsOpen = !varsOpen; paletteOpen = false; }}>vars</button>
-			<button title="Insert an instruction" onclick={(e) => { e.stopPropagation(); paletteOpen = !paletteOpen; varsOpen = false; }}>+ add</button>
+			{#if !ldModel && !sfcModel}
+				<button title="Insert an instruction" onclick={(e) => { e.stopPropagation(); paletteOpen = !paletteOpen; varsOpen = false; }}>+ add</button>
+			{/if}
 		{/if}
 	</div>
 	{#if error}
 		<div class="error">{error}</div>
 	{/if}
+	{#if ldModel}
+		<div class="flow ldscroll" class:stale={!!error}>
+			<LadderView
+				model={ldModel}
+				editable={!diffing}
+				diags={diffing ? [] : diags}
+				status={ldStatus}
+				showLive={!diffing}
+				onOp={(op) => vscode.postMessage({ type: 'ldEdit', op })}
+				onTrace={(msg) => vscode.postMessage({ type: 'ldTrace', msg })}
+				{requestInput}
+			/>
+		</div>
+	{:else if sfcModel}
+		<div class="flow ldscroll" class:stale={!!error}>
+			<SfcView
+				model={sfcModel}
+				editable={!diffing}
+				diags={diffing ? [] : diags}
+				showLive={!diffing}
+				onOp={(op) => vscode.postMessage({ type: 'sfcEdit', op })}
+				{requestInput}
+			/>
+		</div>
+	{:else}
 	<div class="flow" class:stale={!!error}>
 		<SvelteFlow
 			bind:nodes
@@ -365,31 +566,41 @@
 			<FitController {structureKey} />
 		</SvelteFlow>
 	</div>
-	<Palette bind:open={paletteOpen} />
-	<VarsPanel bind:open={varsOpen} vars={varList} used={usedNames} />
-	{#if input}
-		<input
-			bind:this={inputEl}
-			class="float-input"
-			spellcheck="false"
-			style="left: {input.at.x}px; top: {input.at.y - 2}px; width: {Math.max(input.at.w, 72)}px"
-			bind:value={input.value}
-			onkeydown={inputKeydown}
-			onblur={() => (input = null)}
-		/>
 	{/if}
+	<Palette bind:open={paletteOpen} vars={varList} />
+	<VarsPanel
+		bind:open={varsOpen}
+		vars={varList}
+		used={usedNames}
+		onDeclare={ldModel
+			? (name, type, section) =>
+					vscode.postMessage({ type: 'ldEdit', op: { type: 'declareVar', name, varType: type, section } })
+			: sfcModel
+				? (name, type, section) =>
+						vscode.postMessage({ type: 'sfcEdit', op: { type: 'declareVar', name, varType: type, section } })
+				: undefined}
+		onDelete={ldModel
+			? (name) => vscode.postMessage({ type: 'ldEdit', op: { type: 'deleteVar', name } })
+			: sfcModel
+				? (name) => vscode.postMessage({ type: 'sfcEdit', op: { type: 'deleteVar', name } })
+				: undefined}
+	/>
+	{#if inspect}
+		<InstancePanel inst={inspect} onclose={() => (inspect = null)} />
+	{/if}
+	<FloatEditor bind:this={editor} {tagItems} />
 </div>
 
-<svelte:window onclick={() => { paletteOpen = false; varsOpen = false; }} {onkeydown} />
+<svelte:window onclick={() => { paletteOpen = false; varsOpen = false; inspect = null; }} {onkeydown} />
 
 <style>
 	.host {
 		height: 100vh;
 		display: flex;
 		flex-direction: column;
-		background: var(--vscode-editor-background, #1e1e1e);
-		color: var(--vscode-foreground, #ccc);
-		font-family: var(--vscode-font-family, sans-serif);
+		background: var(--nx-bg);
+		color: var(--nx-ui-ink);
+		font-family: var(--nx-font);
 	}
 	.bar {
 		display: flex;
@@ -397,7 +608,7 @@
 		gap: 10px;
 		padding: 4px 10px;
 		font-size: 12px;
-		border-bottom: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));
+		border-bottom: 1px solid var(--nx-border);
 		user-select: none;
 	}
 	.bar .title {
@@ -408,35 +619,53 @@
 	}
 	.bar .hint {
 		font-size: 11px;
-		color: var(--vscode-descriptionForeground, #888);
+		color: var(--nx-muted);
+		/* The hint yields space first — it must never squeeze the buttons
+		   into wrapping their labels. */
+		min-width: 0;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	.bar .spacer {
 		flex: 1;
 	}
 	.bar button {
 		background: transparent;
-		color: var(--vscode-foreground, #ccc);
-		border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.35));
+		color: var(--nx-ui-ink);
+		border: 1px solid var(--nx-border);
 		border-radius: 3px;
 		padding: 1px 8px;
 		height: 22px;
 		cursor: pointer;
 		font-size: 12px;
+		white-space: nowrap;
+		flex-shrink: 0;
 	}
 	.bar button:hover {
-		background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.2));
+		background: var(--nx-hover);
 	}
 	.bar button.livepill {
 		border-radius: 999px;
-		color: var(--vscode-descriptionForeground, #8c8c8c);
+		color: var(--nx-muted);
+	}
+	.bar button.syncpill {
+		border-radius: 999px;
+		color: var(--nx-warn);
+		border-color: var(--nx-warn);
+		font-weight: 600;
+	}
+	.bar button.syncpill.edit {
+		color: var(--nx-accent);
+		border-color: var(--nx-accent);
 	}
 	.bar button.livepill.on {
-		color: var(--vscode-charts-green, #64d88a);
-		border-color: var(--vscode-charts-green, #64d88a);
+		color: var(--nx-ok);
+		border-color: var(--nx-ok);
 	}
 	.bar button.livepill.offline {
-		color: var(--vscode-editorWarning-foreground, #d7a021);
-		border-color: var(--vscode-editorWarning-foreground, #d7a021);
+		color: var(--nx-warn);
+		border-color: var(--nx-warn);
 	}
 	.legend {
 		display: inline-flex;
@@ -452,43 +681,57 @@
 		vertical-align: -1px;
 	}
 	.legend .sw.added {
-		background: var(--vscode-gitDecoration-addedResourceForeground, #2ea043);
+		background: var(--nx-added);
 	}
 	.legend .sw.removed {
-		background: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
+		background: var(--nx-removed);
 	}
 	.legend .sw.changed {
-		background: var(--vscode-gitDecoration-modifiedResourceForeground, #d7a021);
+		background: var(--nx-changed);
+	}
+	/* the ladder diff uses its own palette (green means power there) */
+	.legend.ld .sw.added {
+		background: #3fc6ff;
+	}
+	.legend.ld .sw.changed {
+		background: #e2b93d;
 	}
 	.selcount {
 		font-size: 11px;
 		font-weight: 600;
 		padding: 1px 8px;
 		border-radius: 999px;
-		color: var(--vscode-focusBorder, #58a6ff);
-		border: 1px solid var(--vscode-focusBorder, #58a6ff);
+		color: var(--nx-accent);
+		border: 1px solid var(--nx-accent);
+		white-space: nowrap;
+		flex-shrink: 0;
 	}
 	.problems {
 		font-size: 11px;
 		font-weight: 600;
 		padding: 1px 8px;
 		border-radius: 999px;
-		color: var(--vscode-errorForeground, #f48771);
-		border: 1px solid var(--vscode-errorForeground, #f48771);
+		color: var(--nx-err);
+		border: 1px solid var(--nx-err);
 		cursor: help;
+		white-space: nowrap;
+		flex-shrink: 0;
 	}
 	.error {
 		padding: 6px 10px;
 		font-size: 12px;
 		white-space: pre-wrap;
-		font-family: var(--vscode-editor-font-family, monospace);
-		color: var(--vscode-errorForeground, #f48771);
-		background: var(--vscode-inputValidation-errorBackground, rgba(200, 60, 60, 0.12));
-		border-bottom: 1px solid var(--vscode-errorForeground, #f48771);
+		font-family: var(--nx-mono);
+		color: var(--nx-err);
+		background: var(--nx-err-bg);
+		border-bottom: 1px solid var(--nx-err);
 	}
 	.flow {
 		flex: 1;
 		min-height: 0;
+	}
+	.flow.ldscroll {
+		overflow: auto;
 	}
 	.flow.stale {
 		opacity: 0.45;
@@ -497,35 +740,23 @@
 	.diffing :global(.svelte-flow__node:has(.same)) {
 		opacity: 0.6;
 	}
-	.float-input {
-		position: fixed;
-		z-index: 30;
-		font-family: var(--vscode-editor-font-family, monospace);
-		font-size: 12px;
-		padding: 2px 6px;
-		border-radius: 4px;
-		background: var(--vscode-input-background, #3c3c3c);
-		color: var(--vscode-input-foreground, #ccc);
-		border: 1px solid var(--vscode-focusBorder, #58a6ff);
-		outline: none;
-	}
 	:global(.svelte-flow) {
-		background: var(--vscode-editor-background, #1e1e1e) !important;
+		background: var(--nx-bg) !important;
 	}
 	:global(.svelte-flow__minimap) {
-		background: var(--vscode-editorWidget-background, #252526) !important;
+		background: var(--nx-panel-bg) !important;
 	}
 	:global(.svelte-flow__controls button) {
-		background: var(--vscode-editorWidget-background, #252526);
-		border-bottom: 1px solid var(--vscode-editorWidget-border, #454545);
-		fill: var(--vscode-foreground, #ccc);
+		background: var(--nx-panel-bg);
+		border-bottom: 1px solid var(--nx-border);
+		fill: var(--nx-ui-ink);
 	}
 	:global(.svelte-flow__edge.selected .wirepath) {
-		stroke: var(--vscode-focusBorder, #58a6ff) !important;
+		stroke: var(--nx-accent) !important;
 		stroke-width: 2.4;
 	}
 	:global(.svelte-flow__connectionline path) {
-		stroke: var(--vscode-charts-blue, #58a6ff);
+		stroke: var(--nx-blue);
 		stroke-dasharray: 5 3;
 	}
 </style>

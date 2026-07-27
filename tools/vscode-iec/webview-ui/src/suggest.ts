@@ -1,0 +1,75 @@
+// Completion vocabulary + filtering for the diagram's text fields. Free
+// text with suggestions, in the spirit of intellisense: nothing is ever
+// forced — an unknown name still lands and becomes a diagnostic to follow.
+
+export type SuggestItem = { name: string; detail?: string };
+
+// Operators/functions the FBD transpiler and IR builtins understand.
+export const FUNCTIONS: SuggestItem[] = [
+	'AND', 'OR', 'XOR', 'NOT', 'ADD', 'SUB', 'MUL', 'DIV', 'MOD', 'MOVE',
+	'GT', 'GE', 'LT', 'LE', 'EQ', 'NE',
+	'SEL', 'MUX', 'MIN', 'MAX', 'LIMIT',
+	'ABS', 'SQRT', 'EXPT', 'TRUNC', 'SIN', 'COS', 'TAN', 'ASIN', 'ACOS', 'ATAN', 'ATAN2',
+	'LN', 'LOG', 'EXP', 'SHL', 'SHR', 'ROL', 'ROR',
+	'LEN', 'CONCAT', 'LEFT', 'RIGHT', 'MID', 'FIND', 'INSERT', 'DELETE', 'REPLACE'
+].map((name) => ({ name }));
+
+// Standard function block types (lang/ir/builtins_fb.go).
+export const FB_TYPES: SuggestItem[] = [
+	{ name: 'TON', detail: 'on-delay timer' },
+	{ name: 'TOF', detail: 'off-delay timer' },
+	{ name: 'TP', detail: 'pulse timer' },
+	{ name: 'CTU', detail: 'count up' },
+	{ name: 'CTD', detail: 'count down' },
+	{ name: 'CTUD', detail: 'count up/down' },
+	{ name: 'R_TRIG', detail: 'rising edge' },
+	{ name: 'F_TRIG', detail: 'falling edge' },
+	{ name: 'SR', detail: 'set-dominant latch' },
+	{ name: 'RS', detail: 'reset-dominant latch' }
+];
+
+// Declarable elementary types (lang/st).
+export const TYPES: SuggestItem[] = [
+	'BOOL', 'INT', 'DINT', 'UINT', 'UDINT', 'WORD', 'REAL', 'LREAL', 'TIME', 'STRING'
+].map((name) => ({ name }));
+
+const LIMIT_SHOWN = 10;
+
+/** Case-insensitive match, prefix hits ranked before substring hits. */
+export function filterItems(items: SuggestItem[], token: string): SuggestItem[] {
+	const t = token.toLowerCase();
+	if (!t) return items.slice(0, LIMIT_SHOWN);
+	const pre: SuggestItem[] = [];
+	const sub: SuggestItem[] = [];
+	for (const it of items) {
+		const n = it.name.toLowerCase();
+		if (n === t) continue; // already typed exactly — nothing to offer
+		if (n.startsWith(t)) pre.push(it);
+		else if (n.includes(t)) sub.push(it);
+	}
+	return pre.concat(sub).slice(0, LIMIT_SHOWN);
+}
+
+/** The function name of a call being edited ("GT(_, 0.0)" → "GT"). */
+export function leadingIdent(value: string): string {
+	return /^\s*([A-Za-z_][A-Za-z0-9_]*)/.exec(value)?.[1] ?? '';
+}
+
+/** Replace just the function name, keeping the argument list intact. */
+export function replaceLeadingIdent(value: string, name: string): string {
+	const m = /^(\s*)([A-Za-z_][A-Za-z0-9_]*)?([\s\S]*)$/.exec(value)!;
+	const rest = m[3] ?? '';
+	return m[1] + name + (rest.trim() ? rest : '(_)');
+}
+
+/** The token being completed in a comma-separated list. */
+export function lastToken(value: string): string {
+	const i = value.lastIndexOf(',');
+	return i === -1 ? value : value.slice(i + 1);
+}
+
+/** Replace that token, preserving everything before the last comma. */
+export function replaceLastToken(value: string, name: string): string {
+	const i = value.lastIndexOf(',');
+	return i === -1 ? name : value.slice(0, i + 1) + ' ' + name;
+}

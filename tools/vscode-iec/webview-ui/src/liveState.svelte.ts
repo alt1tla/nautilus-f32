@@ -5,6 +5,11 @@
 // frame rate without rebuilding the Svelte Flow node array, so drags,
 // selections, and open inputs are never disturbed by a data update.
 
+import { resolveLabel, arrayLowerBounds, member } from './liveResolve';
+import type { VarDecl } from './layout';
+
+export { member };
+
 export const live = $state({
 	// True once the extension has reported state — the toolbar pill stays
 	// hidden until then rather than claiming "off" before we know.
@@ -13,7 +18,11 @@ export const live = $state({
 	fresh: false,
 	// Top-level keys are lowercased by the extension; struct members inside
 	// (FB pins, UDT fields) keep their declared casing.
-	values: {} as Record<string, unknown>
+	values: {} as Record<string, unknown>,
+	// Per-dimension array lower bounds by lowercased variable name, parsed
+	// from the header declarations — an IEC ARRAY[1..4] stores element [1]
+	// at position 0, so indexed chips can't resolve without them.
+	bounds: {} as Record<string, number[]>
 });
 
 export function setLive(frame: { enabled: boolean; fresh: boolean; values: Record<string, unknown> }): void {
@@ -23,27 +32,30 @@ export function setLive(frame: { enabled: boolean; fresh: boolean; values: Recor
 	live.values = frame.values;
 }
 
-/** Resolve a diagram label ("PumpRun", "Motor.Speed", FB pin via liveMember)
- * against the value map, case-insensitively down the accessor path — the
- * same resolution the text scanner applies. undefined = no pill. */
-export function liveValue(label: string): unknown {
-	if (!live.enabled || !label) return undefined;
-	const parts = label.split('.');
-	let v: unknown = live.values[parts[0].toLowerCase()];
-	for (let i = 1; i < parts.length && v !== undefined; i++) {
-		v = member(v, parts[i]);
+/** Refresh the array-bounds map from the model's header declarations. */
+export function setVarBounds(vars: VarDecl[]): void {
+	const bounds: Record<string, number[]> = {};
+	for (const v of vars) {
+		const dims = arrayLowerBounds(v.type);
+		if (dims) bounds[v.name.toLowerCase()] = dims;
 	}
-	return v;
+	live.bounds = bounds;
 }
 
-/** One case-insensitive member step (an FB output pin off its instance struct). */
-export function member(v: unknown, key: string): unknown {
-	if (v === null || typeof v !== 'object' || Array.isArray(v)) return undefined;
-	const obj = v as Record<string, unknown>;
-	if (key in obj) return obj[key];
-	const lk = key.toLowerCase();
-	const hit = Object.keys(obj).find((k) => k.toLowerCase() === lk);
-	return hit === undefined ? undefined : obj[hit];
+/** Resolve a diagram label — "PumpRun", "Motor.Speed", "TempHist[2]",
+ * "m[1][2]", "tbl[i].val" (variable indexes follow their own live value) —
+ * against the value map. undefined = no pill. */
+export function liveValue(label: string): unknown {
+	if (!live.enabled || !label) return undefined;
+	return resolveLabel(live.values, live.bounds, label);
+}
+
+/** True when the live stream is current AND the controller has no tag by
+ * this name — the design-time warning for an external READ that would fault
+ * the scan (writes create tags; reads of never-written tags error). Only
+ * meaningful for VAR_EXTERNAL names; callers gate on the section. */
+export function liveMissing(name: string): boolean {
+	return live.enabled && live.fresh && !(name.split(/[.[]/)[0].toLowerCase() in live.values);
 }
 
 /** Compact single-line rendering — mirrors formatValue in src/scan.ts so a

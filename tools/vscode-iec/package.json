@@ -1,8 +1,8 @@
 {
   "name": "vscode-iec",
   "displayName": "nautilus IEC 61131-3",
-  "description": "IEC 61131-3 language support for the nautilus SCADA framework: Structured Text (.st) and Function Block Diagram (.fbd) with syntax highlighting, compile diagnostics, go-to-definition, a live FBD diagram preview with visual diff, and inline live tag values from a running controller.",
-  "version": "0.8.0",
+  "description": "IEC 61131-3 language support for the nautilus SCADA framework: Structured Text (.st), Function Block Diagram (.fbd), Ladder Diagram (.ld) and Sequential Function Chart (.sfc) with syntax highlighting, compile diagnostics, go-to-definition, live graphical diagram editors, inline live tag values from a running controller, and a graphical HMI mimic editor for *.mimic.json P&ID documents.",
+  "version": "0.9.15",
   "publisher": "joyautomation",
   "license": "Apache-2.0",
   "icon": "icon.png",
@@ -22,6 +22,7 @@
     "structured text",
     "plc",
     "scada",
+    "hmi",
     "nautilus"
   ],
   "repository": {
@@ -36,7 +37,9 @@
   "main": "./out/extension.js",
   "activationEvents": [
     "onLanguage:iec-st",
-    "onLanguage:iec-fbd"
+    "onLanguage:iec-fbd",
+    "onLanguage:iec-ld",
+    "onLanguage:iec-sfc"
   ],
   "contributes": {
     "languages": [
@@ -50,7 +53,11 @@
         "extensions": [
           ".st"
         ],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "dark": "./icons/st-dark.svg",
+          "light": "./icons/st-light.svg"
+        }
       },
       {
         "id": "iec-fbd",
@@ -62,7 +69,43 @@
         "extensions": [
           ".fbd"
         ],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "dark": "./icons/fbd-dark.svg",
+          "light": "./icons/fbd-light.svg"
+        }
+      },
+      {
+        "id": "iec-ld",
+        "aliases": [
+          "Ladder Diagram",
+          "IEC 61131-3 Ladder Diagram",
+          "iec-ld"
+        ],
+        "extensions": [
+          ".ld"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "dark": "./icons/ld-dark.svg",
+          "light": "./icons/ld-light.svg"
+        }
+      },
+      {
+        "id": "iec-sfc",
+        "aliases": [
+          "Sequential Function Chart",
+          "IEC 61131-3 Sequential Function Chart",
+          "iec-sfc"
+        ],
+        "extensions": [
+          ".sfc"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "dark": "./icons/sfc-dark.svg",
+          "light": "./icons/sfc-light.svg"
+        }
       }
     ],
     "grammars": [
@@ -75,6 +118,16 @@
         "language": "iec-fbd",
         "scopeName": "source.iec-fbd",
         "path": "./syntaxes/iec-fbd.tmLanguage.json"
+      },
+      {
+        "language": "iec-ld",
+        "scopeName": "source.iec-ld",
+        "path": "./syntaxes/iec-ld.tmLanguage.json"
+      },
+      {
+        "language": "iec-sfc",
+        "scopeName": "source.iec-sfc",
+        "path": "./syntaxes/iec-sfc.tmLanguage.json"
       }
     ],
     "commands": [
@@ -108,6 +161,16 @@
         "icon": "$(open-preview)"
       },
       {
+        "command": "nautilus.ld.preview",
+        "title": "nautilus: Open Ladder Diagram Preview",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "nautilus.sfc.preview",
+        "title": "nautilus: Open SFC Diagram Preview",
+        "icon": "$(open-preview)"
+      },
+      {
         "command": "nautilus.fbd.diff",
         "title": "nautilus: Diff FBD Diagram (vs git HEAD)",
         "icon": "$(diff)"
@@ -116,6 +179,30 @@
         "command": "nautilus.fbd.diffController",
         "title": "nautilus: Diff FBD Diagram (vs Controller)",
         "icon": "$(diff)"
+      },
+      {
+        "command": "nautilus.ld.diff",
+        "title": "nautilus: Diff Ladder Diagram (vs git HEAD)",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "nautilus.ld.diffController",
+        "title": "nautilus: Diff Ladder Diagram (vs Controller)",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "nautilus.sfc.diff",
+        "title": "nautilus: Diff SFC Diagram (vs git HEAD)",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "nautilus.sfc.diffController",
+        "title": "nautilus: Diff SFC Diagram (vs Controller)",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "nautilus.editComponentPorts",
+        "title": "Nautilus: Edit Component Ports\u2026"
       }
     ],
     "menus": {
@@ -123,6 +210,16 @@
         {
           "command": "nautilus.fbd.preview",
           "when": "resourceLangId == iec-fbd",
+          "group": "navigation"
+        },
+        {
+          "command": "nautilus.ld.preview",
+          "when": "resourceLangId == iec-ld",
+          "group": "navigation"
+        },
+        {
+          "command": "nautilus.sfc.preview",
+          "when": "resourceLangId == iec-sfc",
           "group": "navigation"
         }
       ],
@@ -132,12 +229,36 @@
           "when": "resourceLangId == iec-fbd"
         },
         {
+          "command": "nautilus.ld.preview",
+          "when": "resourceLangId == iec-ld"
+        },
+        {
+          "command": "nautilus.sfc.preview",
+          "when": "resourceLangId == iec-sfc"
+        },
+        {
           "command": "nautilus.fbd.diff",
           "when": "resourceLangId == iec-fbd"
         },
         {
           "command": "nautilus.fbd.diffController",
           "when": "resourceLangId == iec-fbd"
+        },
+        {
+          "command": "nautilus.ld.diff",
+          "when": "resourceLangId == iec-ld"
+        },
+        {
+          "command": "nautilus.ld.diffController",
+          "when": "resourceLangId == iec-ld"
+        },
+        {
+          "command": "nautilus.sfc.diff",
+          "when": "resourceLangId == iec-sfc"
+        },
+        {
+          "command": "nautilus.sfc.diffController",
+          "when": "resourceLangId == iec-sfc"
         }
       ]
     },
@@ -162,7 +283,12 @@
         "nautilus.token": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Bearer token for writes to a token-gated controller (matches the controller's `NAUTILUS_TOKEN`). Needed only for online-edit download/rollback against a controller started with a token — reads and `nautilus pull` never require it. Prefer setting this in workspace settings, not user settings."
+          "markdownDescription": "Bearer token for writes to a token-gated controller (matches the controller's `NAUTILUS_TOKEN`). Needed only for online-edit download/rollback against a controller started with a token \u2014 reads and `nautilus pull` never require it. Prefer setting this in workspace settings, not user settings."
+        },
+        "nautilus.mimic.snapToGrid": {
+          "type": "boolean",
+          "default": true,
+          "description": "Snap dragged equipment, labels and pipe vertices to the grid in the Mimic Editor. Also toggleable from the editor's toolbar. Shift-arrow nudging always snaps regardless of this setting."
         }
       }
     },
@@ -176,17 +302,64 @@
           }
         ],
         "priority": "option"
+      },
+      {
+        "viewType": "nautilus.ldDiagram",
+        "displayName": "Ladder Diagram",
+        "selector": [
+          {
+            "filenamePattern": "*.ld"
+          }
+        ],
+        "priority": "option"
+      },
+      {
+        "viewType": "nautilus.sfcDiagram",
+        "displayName": "SFC Diagram",
+        "selector": [
+          {
+            "filenamePattern": "*.sfc"
+          }
+        ],
+        "priority": "option"
+      },
+      {
+        "viewType": "nautilus.mimicEditor",
+        "displayName": "Mimic Editor",
+        "selector": [
+          {
+            "filenamePattern": "*.mimic.json"
+          }
+        ],
+        "priority": "default"
+      },
+      {
+        "viewType": "nautilus.componentEditor",
+        "displayName": "Component Editor",
+        "selector": [
+          {
+            "filenamePattern": "*.component.json"
+          }
+        ],
+        "priority": "default"
       }
     ]
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Rendering user-authored Svelte components inside the mimic/Component Editor compiles project code with esbuild and the workspace's own toolchain (svelte/compiler, node_modules). This is disabled in untrusted workspaces \u2014 the built-in kit components and placeholder chips still work fully."
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile && npm run build:webview",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node --test out/scan.test.js",
+    "test": "npm run compile && node --test out/scan.test.js out/mimicOps.test.js out/mimicComponentIndex.test.js out/userComponentBuild.test.js && npm --prefix webview-ui run test",
     "build:webview": "npm --prefix webview-ui run build"
   },
   "dependencies": {
+    "esbuild": "^0.28.1",
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {

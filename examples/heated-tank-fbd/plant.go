@@ -19,6 +19,7 @@ type Plant struct {
 	tempC     float64
 	pumpRun   bool
 	heaterPct float64
+	testExt   float64
 	last      time.Time
 }
 
@@ -75,10 +76,12 @@ func (p *Plant) ReadInputs() (nio.Values, error) {
 	qMix := inflow * cpJPerKgK * (inletTempC - p.tempC)
 	p.tempC += (qHeat+qMix)/(massKg*cpJPerKgK)*dt - ambientLoss*(p.tempC-ambientC)*dt
 	p.tempC = clamp(p.tempC, 0, 110)
+	p.testExt = 123.456
 
 	return nio.Values{
 		"LevelPct": p.volumeL / capacityL * 100,
 		"TempC":    p.tempC,
+		"testExt":  p.testExt,
 	}, nil
 }
 

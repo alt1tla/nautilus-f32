@@ -12,7 +12,14 @@
 import * as http from "http";
 import * as https from "https";
 import * as vscode from "vscode";
-import { formatValue, formatValueHover, scanIdentifiers } from "./scan";
+import {
+  formatValue,
+  formatValueHover,
+  instanceScope,
+  scanFbRegions,
+  scanIdentifiers,
+  scanInstanceDecls,
+} from "./scan";
 
 type Frame = {
   ts: number;
@@ -26,7 +33,7 @@ type Frame = {
 /** Both IEC languages get live values — the identifier scanner is syntax-
  * agnostic and FBD netlists reference the same runtime tags. */
 function isIecDoc(doc: vscode.TextDocument): boolean {
-  return doc.languageId === "iec-st" || doc.languageId === "iec-fbd";
+  return doc.languageId === "iec-st" || doc.languageId === "iec-fbd" || doc.languageId === "iec-ld";
 }
 
 /** A frame is "fresh" if it arrived within this window; otherwise chips gray out. */
@@ -45,6 +52,14 @@ export class LiveValues implements vscode.Disposable {
   private enabled: boolean;
   private values = new Map<string, unknown>(); // lowercased tag name → value
   private listeners = new Set<LiveFrameListener>();
+  // FUNCTION_BLOCK instance monitoring: which called instance an FB body's
+  // pills read from (fb type, lowercased → instance name), plus the
+  // instances declared across project sources (found by scanning).
+  private monitors = new Map<string, string>();
+  private candidates = new Map<string, string[]>();
+  private candidatesAt = 0;
+  private readonly monitorsChanged = new vscode.EventEmitter<void>();
+  readonly onDidChangeMonitors = this.monitorsChanged.event;
   private lastFrameMs = 0;
   private req: http.ClientRequest | undefined;
   private reconnectTimer: NodeJS.Timeout | undefined;
@@ -255,25 +270,134 @@ export class LiveValues implements vscode.Disposable {
       }
       const decos: vscode.DecorationOptions[] = [];
       const text = editor.document.getText();
-      for (const site of scanIdentifiers(text, this.values)) {
-        const pos = editor.document.positionAt(site.end);
-        // site.value is resolved down the accessor path — a member reference
-        // (RTU.VALUE) shows the child value, not the parent struct.
-        const hover = new vscode.MarkdownString();
-        hover.appendMarkdown(`**${site.path}** — live value from ${this.runtimeUrl()}\n`);
-        hover.appendCodeblock(formatValueHover(site.value), "");
-        decos.push({
-          range: new vscode.Range(pos, pos),
-          renderOptions: {
-            after: { contentText: formatValue(site.value) },
-          },
-          hoverMessage: hover,
-        });
+      // Segment the document: program text scans against the global watch;
+      // each FUNCTION_BLOCK body scans against its MONITORED instance's
+      // members (r1.prev behind a bare `prev`), like a PLC IDE's instance
+      // view. Bodies without a monitored (or streaming) instance show no
+      // pills — a bare member has no value of its own.
+      type Seg = { text: string; offset: number; map: ReadonlyMap<string, unknown>; prefix: string };
+      const segs: Seg[] = [];
+      let cursor = 0;
+      const regions = scanFbRegions(text);
+      for (const r of regions) {
+        if (r.start > cursor) {
+          segs.push({ text: text.slice(cursor, r.start), offset: cursor, map: this.values, prefix: "" });
+        }
+        const inst = this.monitorFor(r.type);
+        const scoped = inst ? instanceScope(this.values, inst) : undefined;
+        if (inst && scoped) {
+          segs.push({ text: text.slice(r.bodyStart, r.end), offset: r.bodyStart, map: scoped, prefix: inst + "." });
+        }
+        cursor = r.end;
+      }
+      if (cursor < text.length) {
+        segs.push({ text: text.slice(cursor), offset: cursor, map: this.values, prefix: "" });
+      }
+      if (regions.length > 0) this.ensureCandidates(editor.document);
+
+      for (const seg of segs) {
+        for (const site of scanIdentifiers(seg.text, seg.map)) {
+          const pos = editor.document.positionAt(seg.offset + site.end);
+          // site.value is resolved down the accessor path — a member reference
+          // (RTU.VALUE) shows the child value, not the parent struct.
+          const hover = new vscode.MarkdownString();
+          hover.appendMarkdown(`**${seg.prefix}${site.path}** — live value from ${this.runtimeUrl()}\n`);
+          hover.appendCodeblock(formatValueHover(site.value), "");
+          decos.push({
+            range: new vscode.Range(pos, pos),
+            renderOptions: {
+              after: { contentText: formatValue(site.value) },
+            },
+            hoverMessage: hover,
+          });
+        }
       }
       editor.setDecorations(fresh ? this.staleDeco : this.freshDeco, []);
       editor.setDecorations(fresh ? this.freshDeco : this.staleDeco, decos);
     }
     this.notify();
+  }
+
+  // ── FUNCTION_BLOCK instance monitoring ──────────────────────────────────
+
+  /** The instance an FB type's body currently reads from ("" = none). */
+  monitorFor(fbType: string): string {
+    return this.monitors.get(fbType.toLowerCase()) ?? "";
+  }
+
+  /** Candidate instances of an FB type declared across the project. */
+  candidatesFor(fbType: string): string[] {
+    return this.candidates.get(fbType.toLowerCase()) ?? [];
+  }
+
+  /** Point an FB type's body at a called instance and re-render. */
+  setMonitor(fbType: string, instance: string): void {
+    this.monitors.set(fbType.toLowerCase(), instance);
+    this.monitorsChanged.fire();
+    this.scheduleRender();
+  }
+
+  /** Refresh the instance-declaration index from the project's sources
+   * (at most every few seconds); auto-monitor types with exactly one
+   * declared instance, so the common case needs no clicks at all. */
+  private ensureCandidates(doc: vscode.TextDocument): void {
+    const now = Date.now();
+    if (now - this.candidatesAt < 5000) return;
+    this.candidatesAt = now;
+    void (async () => {
+      const dir = vscode.Uri.joinPath(doc.uri, "..");
+      let sources = "";
+      try {
+        const entries = await vscode.workspace.fs.readDirectory(dir);
+        for (const [name, kind] of entries) {
+          if (kind !== vscode.FileType.File || !/\.(st|fbd)$/i.test(name)) continue;
+          const uri = vscode.Uri.joinPath(dir, name);
+          const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
+          sources += (open ? open.getText() : new TextDecoder().decode(await vscode.workspace.fs.readFile(uri))) + "\n";
+        }
+      } catch {
+        return;
+      }
+      let changed = false;
+      for (const editor of this.stEditors()) {
+        for (const r of scanFbRegions(editor.document.getText())) {
+          const key = r.type.toLowerCase();
+          const found = scanInstanceDecls(sources, r.type);
+          const prev = this.candidates.get(key) ?? [];
+          if (found.join("|") !== prev.join("|")) changed = true;
+          this.candidates.set(key, found);
+          if (!this.monitors.has(key) && found.length === 1) {
+            this.monitors.set(key, found[0]);
+            changed = true;
+          }
+        }
+      }
+      if (changed) {
+        this.monitorsChanged.fire();
+        this.scheduleRender();
+      }
+    })();
+  }
+
+  /** The "monitor instance…" command: QuickPick among declared instances. */
+  async pickMonitor(fbType: string): Promise<void> {
+    this.candidatesAt = 0; // force a fresh scan next render
+    const current = this.monitorFor(fbType);
+    const names = this.candidatesFor(fbType);
+    if (names.length === 0) {
+      void vscode.window.showInformationMessage(
+        `nautilus: no declared instances of ${fbType} found in this project's sources`
+      );
+      return;
+    }
+    const pick = await vscode.window.showQuickPick(
+      names.map((n) => ({
+        label: n,
+        description: n === current ? "monitoring" : undefined,
+      })),
+      { title: `Monitor which ${fbType} instance?` }
+    );
+    if (pick) this.setMonitor(fbType, pick.label);
   }
 
   private updateStatus(): void {
@@ -303,7 +427,39 @@ export class LiveValues implements vscode.Disposable {
     this.freshDeco.dispose();
     this.staleDeco.dispose();
     this.status.dispose();
+    this.monitorsChanged.dispose();
     for (const d of this.disposables) d.dispose();
+  }
+}
+
+/** CodeLens over each FUNCTION_BLOCK header: which called instance the
+ * body's live pills read from, and the affordance to switch — the
+ * PLC-IDE "open instance" experience. */
+export class FbMonitorLenses implements vscode.CodeLensProvider {
+  private readonly changed = new vscode.EventEmitter<void>();
+  readonly onDidChangeCodeLenses = this.changed.event;
+
+  constructor(private live: LiveValues) {
+    live.onDidChangeMonitors(() => this.changed.fire());
+  }
+
+  provideCodeLenses(doc: vscode.TextDocument): vscode.CodeLens[] {
+    const out: vscode.CodeLens[] = [];
+    for (const r of scanFbRegions(doc.getText())) {
+      const inst = this.live.monitorFor(r.type);
+      const n = this.live.candidatesFor(r.type).length;
+      const title = inst
+        ? `◉ live values: monitoring ${inst}${n > 1 ? ` — 1 of ${n}, click to switch` : ""}`
+        : "○ live values: monitor an instance…";
+      out.push(
+        new vscode.CodeLens(new vscode.Range(r.headerLine, 0, r.headerLine, 0), {
+          title,
+          command: "nautilus.fb.monitor",
+          arguments: [r.type],
+        })
+      );
+    }
+    return out;
   }
 }
 

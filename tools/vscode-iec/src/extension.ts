@@ -16,9 +16,15 @@ import {
   LanguageClientOptions,
   ServerOptions,
 } from "vscode-languageclient/node";
-import { LiveValues } from "./liveValues";
+import { FbMonitorLenses, LiveValues } from "./liveValues";
 import { OnlineEdit } from "./onlineEdit";
-import { FbdEditorProvider, FbdPreview } from "./fbdPreview";
+import { broadcastSyncState, FbdEditorProvider, FbdPreview } from "./fbdPreview";
+import { LdEditorProvider, LdPreview } from "./ldPreview";
+import { SfcEditorProvider, SfcPreview } from "./sfcPreview";
+import { MimicEditorProvider } from "./mimicEditor";
+import { ComponentEditorProvider } from "./componentEditor";
+import { UserComponentManager } from "./userComponents";
+import { registerEditComponentPortsCommand } from "./editComponentPorts";
 
 let client: LanguageClient | undefined;
 let live: LiveValues | undefined;
@@ -31,22 +37,65 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   live = new LiveValues();
   context.subscriptions.push(live);
 
-  const online = new OnlineEdit();
+  // The status poll's verdict streams into every diagram webview, so
+  // divergence from the live program is visible where the editing happens.
+  const online = new OnlineEdit(broadcastSyncState);
   context.subscriptions.push(online);
 
   const fbd = new FbdPreview(context, live);
   context.subscriptions.push(fbd);
+
+  const ladder = new LdPreview(context, live);
+  context.subscriptions.push(ladder);
+  const sfc = new SfcPreview(context, live);
+  context.subscriptions.push(sfc);
   // "Open With → FBD Diagram": the diagram as a real editor over the .fbd
   // document (text remains the default editor).
   context.subscriptions.push(new FbdEditorProvider(context, live).register());
+  context.subscriptions.push(new LdEditorProvider(context, live).register());
+  context.subscriptions.push(new SfcEditorProvider(context, live).register());
+  // User-authored Svelte components rendered for real inside the mimic/
+  // Component Editor webviews — gated on workspace trust (it compiles and
+  // runs the project's own code via esbuild + its svelte/compiler).
+  const userComponents = new UserComponentManager(context);
+  context.subscriptions.push(userComponents);
+  context.subscriptions.push(
+    vscode.workspace.onDidGrantWorkspaceTrust(() => userComponents.activateTrust())
+  );
+
+  // "*.mimic.json" opens as the graphical HMI mimic editor by default (the
+  // doc is spatial-first; the JSON is an "Open With → Text Editor" away).
+  const mimic = new MimicEditorProvider(context, userComponents);
+  context.subscriptions.push(mimic.register());
+  context.subscriptions.push(new ComponentEditorProvider(context, userComponents).register());
+  // Graphical port editing for BUILT-INS (Tank, Pump, ...), reusing the same
+  // Component Editor a project's own custom components get — shares the
+  // mimic editor's workspace-wide sidecar index so a sidecar created here
+  // shows up in every open mimic panel immediately.
+  context.subscriptions.push(registerEditComponentPortsCommand(mimic.componentIndex));
 
   context.subscriptions.push(
     vscode.commands.registerCommand("nautilus.liveValues.toggle", () =>
       live?.toggle()
     ),
+    // FUNCTION_BLOCK instance monitoring: the CodeLens over each block
+    // header picks which called instance the body's pills read from.
+    vscode.commands.registerCommand("nautilus.fb.monitor", (fbType?: string) => {
+      if (fbType) void live?.pickMonitor(fbType);
+    }),
+    vscode.languages.registerCodeLensProvider(
+      { language: "iec-st" },
+      new FbMonitorLenses(live)
+    ),
     vscode.commands.registerCommand("nautilus.fbd.preview", () => fbd.preview()),
+    vscode.commands.registerCommand("nautilus.ld.preview", () => ladder.preview()),
+    vscode.commands.registerCommand("nautilus.sfc.preview", () => sfc.preview()),
     vscode.commands.registerCommand("nautilus.fbd.diff", () => fbd.diff()),
     vscode.commands.registerCommand("nautilus.fbd.diffController", () => fbd.diffController()),
+    vscode.commands.registerCommand("nautilus.ld.diff", () => ladder.diff()),
+    vscode.commands.registerCommand("nautilus.ld.diffController", () => ladder.diffController()),
+    vscode.commands.registerCommand("nautilus.sfc.diff", () => sfc.diff()),
+    vscode.commands.registerCommand("nautilus.sfc.diffController", () => sfc.diffController()),
     vscode.commands.registerCommand("nautilus.program.download", () => online.download()),
     vscode.commands.registerCommand("nautilus.program.diff", () => online.diff()),
     vscode.commands.registerCommand("nautilus.program.rollback", () => online.rollback()),
@@ -76,7 +125,12 @@ async function startLanguageClient(context: vscode.ExtensionContext): Promise<vo
     args: ["lsp"],
   };
   const clientOptions: LanguageClientOptions = {
-    documentSelector: [{ language: "iec-st" }, { language: "iec-fbd" }],
+    documentSelector: [
+      { language: "iec-st" },
+      { language: "iec-fbd" },
+      { language: "iec-ld" },
+      { language: "iec-sfc" },
+    ],
   };
 
   client = new LanguageClient(

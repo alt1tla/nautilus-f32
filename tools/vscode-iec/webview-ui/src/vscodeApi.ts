@@ -41,7 +41,8 @@ export type FbdEditOp = {
 		| 'declareVar'
 		| 'deleteVar'
 		| 'setComment'
-		| 'duplicate';
+		| 'duplicate'
+		| 'retarget';
 	node?: string;
 	to?: string;
 	toPin?: string;

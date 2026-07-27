@@ -117,16 +117,16 @@
 
 <style>
 	.fbd-edge {
-		--wire: var(--vscode-editor-foreground, #d4d4d4);
+		--wire: var(--nx-ink);
 	}
 	.fbd-edge.added {
-		--wire: var(--vscode-gitDecoration-addedResourceForeground, #2ea043);
+		--wire: var(--nx-added);
 	}
 	.fbd-edge.removed {
-		--wire: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
+		--wire: var(--nx-removed);
 	}
 	.fbd-edge.changed {
-		--wire: var(--vscode-gitDecoration-modifiedResourceForeground, #d7a021);
+		--wire: var(--nx-changed);
 	}
 	.wirepath {
 		stroke: var(--wire);
@@ -142,7 +142,7 @@
 		stroke-dasharray: 6 3;
 	}
 	.neg {
-		fill: var(--vscode-editor-background, #1e1e1e);
+		fill: var(--nx-bg);
 		stroke: var(--wire);
 		stroke-width: 1.3;
 	}
@@ -152,13 +152,13 @@
 		cursor: pointer;
 	}
 	.not-hit:hover {
-		fill: var(--vscode-editor-foreground, #d4d4d4);
+		fill: var(--nx-ink);
 		fill-opacity: 0.18;
 	}
 	.wirelabel {
 		font-size: 9px;
 		fill: var(--wire);
 		opacity: 0.85;
-		font-family: var(--vscode-editor-font-family, monospace);
+		font-family: var(--nx-mono);
 	}
 </style>

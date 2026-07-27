@@ -150,6 +150,79 @@ function isIdentPart(c: string): boolean {
   return isIdentStart(c) || (c >= "0" && c <= "9");
 }
 
+// ── FUNCTION_BLOCK instance monitoring ────────────────────────────────────
+// Inside a FUNCTION_BLOCK body, bare identifiers are the block's OWN
+// variables — they only have values relative to a specific called instance
+// (r1.prev, not prev). These helpers find the FB regions of a document and
+// the instances of a type declared across project sources, so the editor
+// can scope its pills to a monitored instance, PLC-IDE style.
+
+/** One FUNCTION_BLOCK declaration in a document (offsets into the text). */
+export type FbRegion = {
+  type: string; // the block's type name
+  start: number; // offset of FUNCTION_BLOCK
+  bodyStart: number; // offset just past the header line (pills scope below)
+  end: number; // offset just past END_FUNCTION_BLOCK (or EOF)
+  headerLine: number; // 0-based line of the FUNCTION_BLOCK keyword
+};
+
+/** Find every FUNCTION_BLOCK … END_FUNCTION_BLOCK region. */
+export function scanFbRegions(text: string): FbRegion[] {
+  const out: FbRegion[] = [];
+  const re = /^[ \t]*FUNCTION_BLOCK[ \t]+([A-Za-z_][A-Za-z0-9_]*)/gim;
+  const endRe = /^[ \t]*END_FUNCTION_BLOCK\b/gim;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    endRe.lastIndex = re.lastIndex;
+    const endM = endRe.exec(text);
+    const end = endM ? endM.index + endM[0].length : text.length;
+    const nl = text.indexOf("\n", m.index);
+    out.push({
+      type: m[1],
+      start: m.index,
+      bodyStart: nl === -1 ? m.index + m[0].length : nl + 1,
+      end,
+      headerLine: text.slice(0, m.index).split("\n").length - 1,
+    });
+    re.lastIndex = end;
+  }
+  return out;
+}
+
+/** Find instances of an FB type declared in source: `name : Type` — both
+ * ST VAR-block declarations and FBD `r1 : Type(…)` statements match. Own
+ * FUNCTION_BLOCK declarations don't (the type name follows the keyword). */
+export function scanInstanceDecls(text: string, fbType: string): string[] {
+  // `name : Type` anywhere — the FUNCTION_BLOCK header itself has no colon,
+  // so it can't match. Case-insensitive, first spelling wins.
+  const re = new RegExp(
+    String.raw`\b([A-Za-z_][A-Za-z0-9_]*)[ \t]*:[ \t]*` + fbType + String.raw`\b`,
+    "gi"
+  );
+  const out: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (!out.some((n) => n.toLowerCase() === m![1].toLowerCase())) out.push(m[1]);
+  }
+  return out;
+}
+
+/** Build the value map an FB body scans against: the monitored instance's
+ * members, keyed lowercased — `prev` resolves to r1.prev. undefined when
+ * the instance isn't a struct in the stream (not scanning yet). */
+export function instanceScope(
+  values: ReadonlyMap<string, unknown>,
+  instance: string
+): Map<string, unknown> | undefined {
+  const v = values.get(instance.toLowerCase());
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return undefined;
+  const scoped = new Map<string, unknown>();
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    scoped.set(k.toLowerCase(), val);
+  }
+  return scoped;
+}
+
 /**
  * Compact value rendering: 59.887482 → 59.887, booleans → TRUE/FALSE.
  * Compound values (UDT structs, arrays) render as a quiet size hint —

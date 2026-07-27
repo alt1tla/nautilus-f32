@@ -59,7 +59,8 @@ export type FbdEditOp = {
     | "declareVar"
     | "deleteVar"
     | "setComment"
-    | "duplicate";
+    | "duplicate"
+    | "retarget";
   node?: string;
   to?: string;
   toPin?: string;
@@ -79,7 +80,10 @@ export type FbdEditOp = {
 /** Mirror of lang/fbd.TextEdit: 1-based, end-exclusive. */
 type FbdTextEdit = { line: number; col: number; endLine: number; endCol: number; newText: string };
 
-type WebviewMessage = { type: "edit"; op: FbdEditOp } | { type: "toggleLive" };
+type WebviewMessage =
+  | { type: "edit"; op: FbdEditOp }
+  | { type: "toggleLive" }
+  | { type: "openPou"; pou: string };
 
 const DEBOUNCE_MS = 150;
 
@@ -151,7 +155,7 @@ function cliMissing(cli: string): string {
 
 // ── shared webview session logic ───────────────────────────────────────────
 
-function buildWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
+export function buildWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   // The Svelte Flow editor bundle (webview-ui → media/dist): one JS + one
   // CSS, fully self-contained, CSP-pinned by nonce.
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "media", "dist", "fbd-flow.js"));
@@ -174,10 +178,13 @@ function buildWebviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri): st
 </html>`;
 }
 
-function webviewOptions(extensionUri: vscode.Uri): vscode.WebviewOptions {
+export function webviewOptions(extensionUri: vscode.Uri, extraRoots: vscode.Uri[] = []): vscode.WebviewOptions {
   return {
     enableScripts: true,
-    localResourceRoots: [vscode.Uri.joinPath(extensionUri, "media")],
+    // extraRoots: the mimic/Component Editor add the user-components
+    // storage directory here (see userComponents.ts) so their webview can
+    // load the compiled bundle alongside the extension's own media/dist.
+    localResourceRoots: [vscode.Uri.joinPath(extensionUri, "media"), ...extraRoots],
   };
 }
 
@@ -193,7 +200,48 @@ function handleWebviewMessage(doc: vscode.TextDocument, msg: WebviewMessage): vo
     void vscode.commands.executeCommand("nautilus.liveValues.toggle");
     return;
   }
+  // The instance inspector's "open source": jump to FUNCTION_BLOCK <pou>
+  // in the project's library files.
+  if (msg.type === "openPou") {
+    void openPouSource(doc, msg.pou);
+    return;
+  }
+  // The toolbar's divergence pill: open the visual diff against the live
+  // controller program.
+  if ((msg as { type?: string }).type === "diffLive") {
+    void vscode.commands.executeCommand("nautilus.fbd.diffController");
+    return;
+  }
   editQueue = editQueue.then(() => applyOpMessage(doc, msg)).catch(() => undefined);
+}
+
+/** Find and reveal `FUNCTION_BLOCK <pou>` among the document's sibling .st
+ * files (the project's libraries). Built-in blocks have no source to open. */
+async function openPouSource(doc: vscode.TextDocument, pou: string): Promise<void> {
+  const dir = vscode.Uri.joinPath(doc.uri, "..");
+  const re = new RegExp(String.raw`^[ \t]*FUNCTION_BLOCK[ \t]+` + pou + String.raw`\b`, "im");
+  try {
+    const entries = await vscode.workspace.fs.readDirectory(dir);
+    for (const [name, kind] of entries) {
+      if (kind !== vscode.FileType.File || !/\.st$/i.test(name)) continue;
+      const uri = vscode.Uri.joinPath(dir, name);
+      const text = new TextDecoder().decode(await vscode.workspace.fs.readFile(uri));
+      const m = re.exec(text);
+      if (!m) continue;
+      const opened = await vscode.workspace.openTextDocument(uri);
+      const line = text.slice(0, m.index).split("\n").length - 1;
+      const editor = await vscode.window.showTextDocument(opened, { preview: false });
+      const pos = new vscode.Position(line, 0);
+      editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+      editor.selection = new vscode.Selection(pos, pos);
+      return;
+    }
+  } catch {
+    // fall through to the message below
+  }
+  void vscode.window.showInformationMessage(
+    `nautilus: no FUNCTION_BLOCK ${pou} in this project's .st files — it's a built-in block`
+  );
 }
 
 async function applyOpMessage(doc: vscode.TextDocument, msg: WebviewMessage): Promise<void> {
@@ -221,7 +269,7 @@ async function applyOpMessage(doc: vscode.TextDocument, msg: WebviewMessage): Pr
   await vscode.workspace.applyEdit(edit);
 }
 
-function docTitle(doc: vscode.TextDocument): string {
+export function docTitle(doc: vscode.TextDocument): string {
   return path.basename(doc.uri.fsPath || doc.uri.path);
 }
 
@@ -238,7 +286,7 @@ async function postModel(webview: vscode.Webview, doc: vscode.TextDocument): Pro
 /** Feed live controller values into the diagram for the webview's lifetime.
  * The same stream that drives text-editor pills fans out here, so the
  * diagram obeys the identical enable toggle and freshness window. */
-function attachLiveValues(live: LiveValues | undefined, panel: vscode.WebviewPanel): void {
+export function attachLiveValues(live: LiveValues | undefined, panel: vscode.WebviewPanel): void {
   if (!live) return;
   const sub = live.addConsumer((frame) => {
     void panel.webview.postMessage({ type: "liveValues", ...frame });
@@ -249,7 +297,37 @@ function attachLiveValues(live: LiveValues | undefined, panel: vscode.WebviewPan
 /** Forward the document's squiggles into the diagram: the webview joins
  * them onto nodes by source line, so an error marks the offending block
  * with the same message the text editor shows. */
-function postDiagnostics(webview: vscode.Webview, doc: vscode.TextDocument): void {
+// ── controller sync state, shown IN the diagrams ───────────────────────────
+// Divergence from the live program shouldn't only live in the status bar
+// (which the graphical editors never focus): every diagram webview registers
+// here, and OnlineEdit's poll pushes its verdict for the program it checked.
+// Panels showing a different document get "unknown" (no pill) rather than a
+// verdict that wasn't computed for them.
+type SyncTarget = { webview: vscode.Webview; doc: () => vscode.Uri | undefined };
+const syncTargets = new Set<SyncTarget>();
+let lastSync: { state: string; programUri?: vscode.Uri } | undefined;
+
+export function addSyncTarget(
+  webview: vscode.Webview,
+  doc: () => vscode.Uri | undefined
+): vscode.Disposable {
+  const t: SyncTarget = { webview, doc };
+  syncTargets.add(t);
+  if (lastSync) postSync(t, lastSync.state, lastSync.programUri);
+  return new vscode.Disposable(() => syncTargets.delete(t));
+}
+
+export function broadcastSyncState(state: string, programUri?: vscode.Uri): void {
+  lastSync = { state, programUri };
+  for (const t of syncTargets) postSync(t, state, programUri);
+}
+
+function postSync(t: SyncTarget, state: string, programUri?: vscode.Uri): void {
+  const mine = programUri && t.doc()?.toString() === programUri.toString();
+  void t.webview.postMessage({ type: "syncState", state: mine ? state : "unknown" });
+}
+
+export function postDiagnostics(webview: vscode.Webview, doc: vscode.TextDocument): void {
   const diags = vscode.languages.getDiagnostics(doc.uri).map((d) => ({
     line: d.range.start.line + 1,
     message: d.message,
@@ -265,8 +343,13 @@ export class FbdPreview implements vscode.Disposable {
   private docUri?: vscode.Uri;
   private debounce?: NodeJS.Timeout;
   private disposables: vscode.Disposable[] = [];
-  /** Set while showing a diff; live edits leave the diff on screen. */
-  private diffing = false;
+  /** Set while diffing: the frozen base + title. Edits RE-DIFF against
+   * it so the overlay tracks changes live; "exit diff" or reopening the
+   * preview leaves diff mode. */
+  private diffBase?: { src: string; label: string; title: string };
+  private get diffing(): boolean {
+    return this.diffBase !== undefined;
+  }
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -274,7 +357,7 @@ export class FbdPreview implements vscode.Disposable {
   ) {
     this.disposables.push(
       vscode.workspace.onDidChangeTextDocument((e) => {
-        if (this.panel && !this.diffing && e.document.uri.toString() === this.docUri?.toString()) {
+        if (this.panel && e.document.uri.toString() === this.docUri?.toString()) {
           this.scheduleUpdate(e.document);
         }
       }),
@@ -282,7 +365,7 @@ export class FbdPreview implements vscode.Disposable {
         // Follow the active .fbd file, like the markdown preview.
         if (this.panel && ed && ed.document.languageId === "iec-fbd") {
           this.docUri = ed.document.uri;
-          this.diffing = false;
+          this.diffBase = undefined;
           this.scheduleUpdate(ed.document);
         }
       }),
@@ -302,7 +385,7 @@ export class FbdPreview implements vscode.Disposable {
     const doc = this.activeFbdDoc();
     if (!doc) return;
     this.docUri = doc.uri;
-    this.diffing = false;
+    this.diffBase = undefined;
     this.ensurePanel();
     await this.update(doc);
   }
@@ -331,22 +414,11 @@ export class FbdPreview implements vscode.Disposable {
   async diffController(): Promise<void> {
     const doc = this.activeFbdDoc();
     if (!doc) return;
-    const url = vscode.workspace
-      .getConfiguration("nautilus")
-      .get<string>("runtimeUrl", "http://localhost:8080")
-      .replace(/\/+$/, "");
-    let info: ProgramInfo;
-    try {
-      const res = await fetch(url + "/api/program");
-      if (!res.ok) throw new Error(res.statusText);
-      info = (await res.json()) as ProgramInfo;
-    } catch {
-      void vscode.window.showErrorMessage(`nautilus: no controller at ${url}`);
-      return;
-    }
+    const info = await fetchControllerProgram(doc.getText());
+    if (!info) return;
     if (info.language !== "fbd") {
       void vscode.window.showErrorMessage(
-        "nautilus: the controller is running an ST program — use \"Diff Program with Controller\" for the text diff"
+        `nautilus: the controller runs this program as ${info.language ?? "st"} — use "Diff Program with Controller" for the text diff`
       );
       return;
     }
@@ -358,7 +430,7 @@ export class FbdPreview implements vscode.Disposable {
     );
   }
 
-  /** Graph base + head sources and post the overlay to the webview. */
+  /** Enter diff mode: freeze the base and post the first overlay. */
   private async showDiff(
     doc: vscode.TextDocument,
     baseSrc: string,
@@ -367,19 +439,37 @@ export class FbdPreview implements vscode.Disposable {
   ): Promise<void> {
     this.docUri = doc.uri;
     this.ensurePanel();
-    const [base, head] = await Promise.all([fbdGraph(baseSrc), fbdGraph(doc.getText())]);
+    this.diffBase = { src: baseSrc, label: baseLabel, title };
+    await this.postDiff(doc);
+  }
+
+  /** Graph the frozen base + the CURRENT text and post the overlay. */
+  private async postDiff(doc: vscode.TextDocument): Promise<void> {
+    if (!this.panel || !this.diffBase) return;
+    const { src, label, title } = this.diffBase;
+    const [base, head] = await Promise.all([fbdGraph(src), fbdGraph(doc.getText())]);
     if ("error" in base || "error" in head) {
-      const msg = ("error" in head ? head.error : "") || ("error" in base ? `${baseLabel}: ${base.error}` : "");
+      // Mid-edit the head may not parse for a moment — stay in diff mode,
+      // surface the message, and the next edit re-diffs.
+      const msg = ("error" in head ? head.error : "") || ("error" in base ? `${label}: ${base.error}` : "");
       this.post({ type: "error", message: msg, title: docTitle(doc) });
       return;
     }
-    this.diffing = true;
     this.post({ type: "diff", base: base.model, head: head.model, title });
   }
 
   private activeFbdDoc(): vscode.TextDocument | undefined {
     const doc = vscode.window.activeTextEditor?.document;
     if (doc && doc.languageId === "iec-fbd") return doc;
+    // The diagram custom editor never appears in activeTextEditor — resolve
+    // its document through the active tab instead.
+    const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+    if (input instanceof vscode.TabInputCustom && input.uri.path.toLowerCase().endsWith(".fbd")) {
+      const custom = vscode.workspace.textDocuments.find(
+        (d) => d.uri.toString() === (input as vscode.TabInputCustom).uri.toString()
+      );
+      if (custom) return custom;
+    }
     // The preview panel may have focus; fall back to the tracked document.
     const tracked = vscode.workspace.textDocuments.find(
       (d) => d.uri.toString() === this.docUri?.toString()
@@ -396,6 +486,10 @@ export class FbdPreview implements vscode.Disposable {
 
   private async update(doc: vscode.TextDocument): Promise<void> {
     if (!this.panel) return;
+    if (this.diffBase) {
+      await this.postDiff(doc);
+      return;
+    }
     const res = await fbdGraph(doc.getText());
     if ("error" in res) {
       this.post({ type: "error", message: res.error, title: docTitle(doc) });
@@ -418,11 +512,19 @@ export class FbdPreview implements vscode.Disposable {
     );
     this.panel.onDidDispose(() => {
       this.panel = undefined;
-      this.diffing = false;
+      this.diffBase = undefined;
     });
     this.panel.webview.onDidReceiveMessage((msg: WebviewMessage) => {
       if (msg.type === "toggleLive") {
         void vscode.commands.executeCommand("nautilus.liveValues.toggle");
+        return;
+      }
+      if ((msg as { type?: string }).type === "exitDiff") {
+        this.diffBase = undefined;
+        const doc = vscode.workspace.textDocuments.find(
+          (d) => d.uri.toString() === this.docUri?.toString()
+        );
+        if (doc) void this.update(doc);
         return;
       }
       if (this.diffing || !this.docUri) return;
@@ -433,6 +535,8 @@ export class FbdPreview implements vscode.Disposable {
     });
     this.panel.webview.html = buildWebviewHtml(this.panel.webview, this.context.extensionUri);
     attachLiveValues(this.live, this.panel);
+    const sync = addSyncTarget(this.panel.webview, () => this.docUri);
+    this.panel.onDidDispose(() => sync.dispose());
   }
 
   private post(msg: unknown): void {
@@ -490,11 +594,13 @@ export class FbdEditorProvider implements vscode.CustomTextEditorProvider {
         postDiagnostics(panel.webview, document);
       }
     });
+    const syncSub = addSyncTarget(panel.webview, () => document.uri);
     panel.onDidDispose(() => {
       if (debounce) clearTimeout(debounce);
       changeSub.dispose();
       messageSub.dispose();
       diagSub.dispose();
+      syncSub.dispose();
     });
     attachLiveValues(this.live, panel);
 
@@ -502,8 +608,32 @@ export class FbdEditorProvider implements vscode.CustomTextEditorProvider {
   }
 }
 
+/** Fetch the controller's program for the POU the given source declares —
+ * multi-task controllers serve each task's ORIGINAL source by POU name.
+ * Shows the connection error itself; returns undefined on failure. */
+export async function fetchControllerProgram(localSrc: string): Promise<ProgramInfo | undefined> {
+  const url = vscode.workspace
+    .getConfiguration("nautilus")
+    .get<string>("runtimeUrl", "http://localhost:8080")
+    .replace(/\/+$/, "");
+  const pou = /^\s*PROGRAM\s+([A-Za-z_][A-Za-z0-9_]*)/m.exec(localSrc)?.[1];
+  try {
+    if (pou) {
+      const res = await fetch(url + "/api/program?pou=" + encodeURIComponent(pou));
+      if (res.ok) return (await res.json()) as ProgramInfo;
+      if (res.status !== 404) throw new Error(res.statusText);
+    }
+    const res = await fetch(url + "/api/program");
+    if (!res.ok) throw new Error(res.statusText);
+    return (await res.json()) as ProgramInfo;
+  } catch {
+    void vscode.window.showErrorMessage(`nautilus: no controller at ${url}`);
+    return undefined;
+  }
+}
+
 /** The file's content at git HEAD, or undefined if untracked/not a repo. */
-function gitShowHead(fsPath: string): Promise<string | undefined> {
+export function gitShowHead(fsPath: string): Promise<string | undefined> {
   const dir = path.dirname(fsPath);
   const base = path.basename(fsPath);
   return new Promise((resolve) => {

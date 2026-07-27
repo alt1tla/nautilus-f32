@@ -27,6 +27,8 @@ software artifact and keeps the runtime a tiny, pure-stdlib core you can read.
 ```
 runtime/     scan loop · tag bus · program host (compile, hot-swap, retained state)
 lang/st      IEC 61131-3 Structured Text: lexer, parser, lowering
+lang/fbd     Function Block Diagram: netlist text ⇄ diagram model, transpiles to ST
+lang/ld      Ladder Diagram: rung text ⇄ ladder model, transpiles to FBD
 lang/ir      typed IR + tree-walking virtual machine (pure stdlib)
 io/          Driver seam — bring your own bus (Modbus, EtherNet/IP, OPC-UA, sim)
 eip/         EtherNet/IP driver for Allen-Bradley Logix: pure-Go CIP stack,
@@ -65,12 +67,31 @@ server the VS Code extension uses).
 **2. Scaffold a project**
 
 ```sh
-nautilus new my-plant
+nautilus new my-plant --no-go     # manifest project: IEC logic + nautilus.yaml, no Go
+nautilus new my-plant             # or the Go library form (simulated plant, Go tests)
 ```
+
+A `--no-go` project is just your logic and a manifest — run and ship it
+with the CLI alone:
+
+```sh
+cd my-plant
+nautilus run        # scan loop + dashboard + tag API on http://localhost:8080
+nautilus build      # emit ./my-plant — a self-contained controller binary
+```
+
+`nautilus.yaml` declares the tasks (one program file each, any language,
+own scan rates), the tags by role, the server, and the field driver
+(loopback for bring-up, EtherNet/IP by configuration). `nautilus build`
+appends the project to the runner and emits one deployable binary — no Go
+toolchain anywhere. Go is the *extension tier*: custom field buses,
+simulation physics, and Go acceptance tests live in the library form
+below, which is the same runtime with the manifest written as code.
 
 Interactive, sv-create style — pick the module path and features (a simulated
 plant, a CI workflow, VS Code setup, git init). You get `main.go`,
-`program.st` (your control logic), a simulated `plant.go`, acceptance tests,
+`program.st` (your control logic), `blocks.st` (reusable function blocks —
+the PI controller lives there), a simulated `plant.go`, acceptance tests,
 CI, and `.vscode/` recommendations.
 
 **3. Run and test it**
@@ -116,13 +137,23 @@ rt, _ := runtime.New(runtime.Options{
     Program: program,             // IEC 61131-3 Structured Text (go:embed)
     Driver:  NewPlant(),          // anything implementing io.Driver
     Scan:    100 * time.Millisecond,
-    Inputs:  []string{"LevelPct", "TempC"},
-    Outputs: []string{"PumpRun", "Heater"},
     DtTag:   "ScanDtS",
-    Seed:    nio.Values{"TempSP": 65.0, "Kp": 12.0, "Ki": 0.15},
+    Tags: []runtime.TagDef{      // each tag's role, seed, and HMI docs — once
+        runtime.Input("LevelPct", runtime.Unit("%")),
+        runtime.Input("TempC", runtime.Unit("°C")),
+        runtime.Setpoint("TempSP", 65.0, runtime.Unit("°C")),
+        runtime.Setpoint("Kp", 12.0),
+        runtime.Setpoint("Ki", 0.15),
+        runtime.Output("PumpRun", runtime.Init(false)), // logic reads it back
+        runtime.Output("Heater", runtime.Unit("%")),
+    },
 })
 go rt.Run(ctx)                    // read inputs → run program → write outputs, every scan
 ```
+
+How tags work — where they come from, which role fits which job, and the
+one rule that bites (reads fault, writes create) — is spelled out in
+[The tag model](#the-tag-model) below.
 
 Or, from a clone of this repo, run the worked example:
 
@@ -258,6 +289,226 @@ honored. The node passes the **Sparkplug TCK edge-node profile** — CI runs the
 `joyautomation/sparkplug-tck-go` harness against a live node on every push. MQTT
 and protobuf live only in this package; the runtime core stays stdlib-only.
 
+## Three languages, one program model
+
+A program file is `.st`, `.fbd`, or `.ld` — pick per task, mix freely in
+one controller. The graphical languages are **text first**: an `.fbd` is a
+netlist, an `.ld` is rung text, both diff/review/merge like code, and the
+VS Code extension projects them into a full graphical editor (right-click
+→ "Open With → FBD Diagram" / "Ladder Diagram") where every gesture is a
+structural edit to the text underneath.
+
+```iecst
+(* interlocks.ld *)
+PROGRAM Interlocks
+VAR_EXTERNAL
+    TempC : REAL; HiTempAlm : BOOL; HornAck : BOOL; Horn : BOOL;
+END_VAR
+LD
+  RUNG hitemp (* comparison as a contact, with a 5 s on-delay *)
+    GT(TempC, 90.0) t2:TON(PT := T#5S) ( HiTempAlm )
+
+  RUNG horn (* the alarm sounds the horn until the operator acks *)
+    HiTempAlm /HornAck ( Horn )
+END_LD
+END_PROGRAM
+```
+
+Rung grammar: series = AND, `[ a | b ]` = OR (nests), `/x` = NC contact,
+`( x )` / `( S x )` / `( R x )` coils, `FN(args)` as a contact (must yield
+BOOL), `inst:TYPE(args)` puts a timer/counter in the rung with power
+driving its standard pin, and `ET => Var` captures block outputs. Each
+language transpiles one hop (`ld → fbd → st`) into the same IR, so
+functions, user FUNCTION_BLOCKs, arrays, diagnostics, live values, online
+edits, and visual diffs work identically everywhere. `nautilus new
+--language ld` (or `fbd`) scaffolds a project in that language. The full
+reference — evaluation semantics and every built-in — is
+[docs/functions.md](docs/functions.md).
+
+## The tag model
+
+The tag store is the seam everything meets at: the IEC program, the field
+driver, the HMI/API, and the editor's live values all read and write the
+same named values. One scan looks like this:
+
+```
+driver.ReadInputs() ──(Input tags)──▶ ┌───────────┐ ──(Output tags)──▶ driver.WriteOutputs()
+                                      │ tag store │
+HMI / POST /api/tags ──(writes)─────▶ │           │ ──(reads)────────▶ HMI / editor pills
+                                      └───────────┘
+                                        ▲       │
+                                 program writes │ program reads
+                                     (coils)    ▼
+```
+
+**A `VAR_EXTERNAL` declaration is a binding, not a creation.** Declaring
+`TempC : REAL;` in your program tells the compiler "resolve this name in
+the tag store at scan time" — it does not make the tag exist. Existence
+comes from a write, and there are exactly four writers:
+
+1. a **seed** in the Go composition (initial value, exists from scan one),
+2. a **driver** delivering it as an input each scan,
+3. an **operator** writing it through the HMI or `POST /api/tags`,
+4. the **program itself** assigning it (a coil write creates the tag).
+
+The one rule that bites: **writes create, reads fault.** Reading a tag
+nobody has ever written stops the scan with `undefined tag <name>` —
+deliberately, so a mis-wired binding fails loudly instead of running on a
+silent zero. The classic trap is a seal-in latch that *reads its own coil*
+on scan one, before the first write; the fix is a seed. (In the FBD
+diagram, with live values on, externals with no backing tag are flagged —
+an amber *no tag* badge in the vars panel and on any chip that reads one —
+so you see this before the download, not after.)
+
+### Declaring tags: one entry per tag
+
+`runtime.Options.Tags` states each tag's **role** once — which direction it
+moves each scan, its initial value, and its HMI documentation — instead of
+spreading the name across the flat `Inputs`/`Outputs`/`Seed`/`Meta` fields
+(all of which still work and compose with `Tags`):
+
+```go
+Tags: []runtime.TagDef{
+    // Field input: the driver produces it. NOT seeded — if the driver
+    // doesn't deliver it, you want the loud fault, not a silent zero.
+    // (The name must also appear in the driver's ReadInputs map.)
+    runtime.Input("TempC", runtime.Desc("Tank temperature"), runtime.Unit("°C")),
+
+    // Operator setpoint / config: seeded so it exists from scan one;
+    // the HMI or POST /api/tags writes it later.
+    runtime.Setpoint("TempSP", 65.0, runtime.Unit("°C")),
+
+    // Field output: the logic produces it, the driver consumes it.
+    // Init() any output the logic also READS — the seal-in latch.
+    runtime.Output("PumpRun", runtime.Init(false), runtime.Desc("Pump run command")),
+
+    // Logic-owned state that must survive read-before-write: latches,
+    // integrators, mode words.
+    runtime.State("Mode", int64(0), runtime.Desc("0=off 1=auto 2=manual")),
+},
+```
+
+Picking a role, by use case:
+
+| You want a tag that…                        | Use                          | Backed by                                   |
+| ------------------------------------------- | ---------------------------- | ------------------------------------------- |
+| comes from a sensor / the field             | `Input(name, …)`             | driver `ReadInputs` map + this entry        |
+| goes to an actuator / the field             | `Output(name, …)`            | your logic writes it (coil)                 |
+| …and your logic also reads it (latch)       | `Output(name, Init(v), …)`   | the seed covers scan one, then the coil     |
+| an operator adjusts (setpoint, gain, limit) | `Setpoint(name, initial, …)` | the seed, then HMI / `POST /api/tags`       |
+| your logic owns across scans (integrator)   | `State(name, initial, …)`    | the seed, then the coil                     |
+| the HMI watches but the field never sees    | plain coil write — no entry  | the program creates it on first write       |
+
+Adding a **new field input** end to end is three lines in three places, all
+by the same name: declare it in the program (`VAR_EXTERNAL testExt : REAL;`
+— or from the diagram's vars panel), produce it in the driver
+(`"testExt": p.testExt` in the `ReadInputs` map), and bind it in the
+composition (`runtime.Input("testExt")`). The `Inputs` list is a deliberate
+allowlist — a driver can't spray arbitrary names into the store — which is
+why the middle step alone isn't enough.
+
+## Structuring logic: functions and function blocks
+
+When a program outgrows one file, IEC 61131-3's unit of reuse is the
+**`FUNCTION_BLOCK`** (stateful — each instance keeps its own timers,
+integrals, latches) and the **`FUNCTION`** (stateless). nautilus sticks to
+the standard here on purpose: there is no vendor-style "call another
+program" — a program is a scheduling unit, a function block is a reuse
+unit, and reaching for reuse means writing a block.
+
+Blocks live in **library files** — `.st` files holding only `TYPE`,
+`FUNCTION`, and `FUNCTION_BLOCK` declarations — and compose ahead of the
+program:
+
+```go
+//go:embed blocks.st
+var blocks string
+
+rt, _ := runtime.New(runtime.Options{
+    Program:   program,            // .st or .fbd
+    Libraries: []string{blocks},   // TYPEs, FUNCTIONs, FUNCTION_BLOCKs
+    ...
+})
+```
+
+```iecst
+(* blocks.st *)
+FUNCTION_BLOCK PI
+VAR_INPUT  SP : REAL; PV : REAL; KP : REAL; KI : REAL; DT : REAL; END_VAR
+VAR_OUTPUT OUT : REAL; END_VAR
+VAR integral : REAL; err : REAL; END_VAR
+err := SP - PV;
+integral := LIMIT(0.0, integral + KI * err * DT, 100.0);
+OUT := LIMIT(0.0, KP * err + integral, 100.0);
+END_FUNCTION_BLOCK
+```
+
+```iecst
+(* program.st — one instance per control loop *)
+VAR tic : PI; END_VAR
+tic(SP := TempSP, PV := TempC, KP := Kp, KI := Ki, DT := ScanDtS);
+Heater := tic.OUT;
+```
+
+The pieces that make this first-class rather than a convention:
+
+- **Callable from any IEC language.** The same `PI` block instantiates
+  from an FBD diagram (`tic : PI(SP := TempSP, ...)`) exactly like a
+  built-in TON — author blocks once, use them from whichever language
+  fits the logic. (Authoring blocks *in* FBD/LD is on the roadmap;
+  today libraries are ST.)
+- **The tooling composes the same way.** The VS Code extension, the LSP,
+  `nautilus check`, and `nautilus pull` all treat sibling library files
+  as in-scope for the program, byte-identically to `Libraries` — so
+  online edits round-trip losslessly and CI sees what the runtime sees.
+- **Instance state is retained.** A block's `VAR` section persists
+  across scans, and PLC-style online edits carry it across program swaps
+  by name and type — a `PI` keeps its integral through a live logic
+  change, like a real controller.
+
+`nautilus new` scaffolds this shape: the PI controller ships in
+`blocks.st`, instantiated from `program.st`.
+
+### More than one program: tasks
+
+The spec's answer to "many programs" isn't calling between them — it's the
+**resource/task model**: several programs scheduled at their own rates
+against one shared tag store. `Options.Tasks` is exactly that:
+
+```go
+rt, _ := runtime.New(runtime.Options{
+    Program: fastLogic,           // the MAIN task: owns field I/O
+    Scan:    10 * time.Millisecond,
+    Tasks: []runtime.Task{
+        {Name: "temperature", Program: pidLoops, Scan: 250 * time.Millisecond, DtTag: "PidDtS"},
+        {Name: "totals", Program: totalizers, Scan: time.Second, DtTag: "TotDtS"},
+    },
+})
+```
+
+Scans never overlap — tasks serialize on one lock, so every scan sees a
+consistent tag snapshot. The main task reads inputs and writes outputs;
+additional tasks compute against the store at their own pace, each with
+its own measured-`dt` tag and its own health in `Stats().Tasks` (rendered
+in the built-in dashboard and the HMI kit's `ScanDiagnostics`).
+
+**Every program online-edits, both directions.** Programs are addressed by
+POU name — `PROGRAM <Name>` is a program's identity. `GET /api/program`
+lists the resource's programs; a `PUT` routes automatically by the POU name
+in the submitted source, and `?pou=` / `?task=` select one explicitly for
+GET/rollback. In VS Code that means a workspace with one program file per
+task Just Works: open the file, Download/Diff/Rollback target that task's
+program, retained state carries across the swap. And `nautilus pull`
+reconciles the whole resource: every controller program pulls back into
+the workspace file declaring its POU (a new program lands in
+`<POU>.st`/`.fbd`), so a field edit to any task is reviewable and
+committable — `--check` fails CI on drift in any of them.
+
+The full language reference — how a scan evaluates each language, ladder
+power-flow semantics, and every built-in operator, function, and function
+block with signatures and behavior — is in
+[docs/functions.md](docs/functions.md).
+
 ## Status
 
 Early. This is the extracted, generalized core of a working demo
@@ -293,6 +544,12 @@ Early. This is the extracted, generalized core of a working demo
 - ✅ `tools/vscode-iec/` — VS Code extension: syntax, compile diagnostics,
   go-to-definition, hover, completion, inline live tag values
 - ✅ `examples/heated-tank` — a runnable controller serving the tag API
+- ✅ `examples/heated-tank-nogo` — the same plant as a manifest project:
+  four tasks in three IEC languages (physics simulated in ST), zero Go,
+  `nautilus run` / `nautilus build`
+- ✅ `examples/hmi-demo` — a SvelteKit operator screen on the HMI kit:
+  tank faceplate, trends, setpoint write-back, driver-connection cards,
+  and scan diagnostics from one SSE stream
 - 🚧 `hmi/` — SvelteKit component kit (in progress; not yet on npm)
 
 ## Roadmap
@@ -300,8 +557,8 @@ Early. This is the extracted, generalized core of a working demo
 - Retained-memory, redundancy, and historian packages behind clean interfaces
 - Publish `@joyautomation/nautilus-hmi` and add an HMI starter to `nautilus new`
 - Native-Go function blocks alongside ST (both lowering to the same IR)
-- Ladder (LD), Function Block (FBD), and SFC front-ends to the same IR, edited
-  as text that projects to a diagram in VS Code
+- FUNCTION_BLOCKs authored in FBD/LD (today: ST); SFC front-end
+- Vendor-format import (Studio 5000 L5X, TIA, PLCopen XML) → nautilus
 - A test harness for acceptance tests that gate deploys (from mini-scada)
 
 ## License
