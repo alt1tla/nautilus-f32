@@ -47,6 +47,36 @@ jobs:
       # now also runs its pure-logic test files, so its deps must exist too.
       - run: npm ci --prefix webview-ui
       - run: npm test
+  version-sync:
+    name: Versions — repo not behind registries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The repo is the source of truth for the extension and HMI versions;
+      # publishing happens from main (publish.yml). A registry running AHEAD
+      # of the repo means someone published out of band — fail loudly.
+      - name: hmi vs npm
+        run: |
+          repo=$(node -p "require('./hmi/package.json').version")
+          reg=$(npm view @joyautomation/nautilus-hmi version 2>/dev/null || echo 0.0.0)
+          echo "repo=$repo npm=$reg"
+          if [ "$(printf '%s\n%s\n' "$repo" "$reg" | sort -V | tail -1)" != "$repo" ]; then
+            echo "::error::hmi/package.json ($repo) is behind npm ($reg)"; exit 1
+          fi
+      - name: extension vs Marketplace and Open VSX
+        run: |
+          repo=$(node -p "require('./tools/vscode-iec/package.json').version")
+          mkt=$(npx --yes @vscode/vsce show joyautomation.vscode-iec --json 2>/dev/null \
+                | node -p "JSON.parse(require('fs').readFileSync(0)).versions[0].version" \
+                || echo 0.0.0)
+          ovsx=$(curl -s https://open-vsx.org/api/joyautomation/vscode-iec \
+                 | node -p "JSON.parse(require('fs').readFileSync(0)).version" || echo 0.0.0)
+          echo "repo=$repo marketplace=$mkt open-vsx=$ovsx"
+          for reg in "$mkt" "$ovsx"; do
+            if [ "$(printf '%s\n%s\n' "$repo" "$reg" | sort -V | tail -1)" != "$repo" ]; then
+              echo "::error::extension package.json ($repo) is behind a registry ($reg)"; exit 1
+            fi
+          done
   release-config:
     name: Release config — goreleaser check
     runs-on: ubuntu-latest

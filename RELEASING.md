@@ -1,72 +1,66 @@
 # Releasing nautilus
 
-Distribution is wired but dormant: the pipeline is in place, and cutting a
-release is a single tag. Nothing publishes until you push a `v*` tag, and the
-third-party publish steps stay skipped until their secrets exist.
+Three artifacts, three version lines, one rule: **the repo is the source of
+truth, and a registry may never run ahead of it.** CI's `version-sync` job
+enforces the rule on every push; `publish.yml` makes registries catch up.
 
-## Cut a release
+| Artifact | Version lives in | Ships when | Where |
+|---|---|---|---|
+| CLI + Go libraries | git tag `v*` | you push the tag | GitHub Release: GoReleaser binaries + a VSIX |
+| VS Code extension | `tools/vscode-iec/package.json` | a version bump lands on main | VS Code Marketplace + Open VSX |
+| `@joyautomation/nautilus-hmi` | `hmi/package.json` | a version bump lands on main | npm |
+
+There are no manual `vsce publish` or `npm publish` runs anymore — publishing
+by hand puts the registry ahead of the repo, which is exactly the drift the
+guard rails exist to prevent.
+
+## Ship the extension or the HMI kit
+
+Bump the `version` in the package's `package.json` (extension: update its
+CHANGELOG too) in the same PR as the change, and merge. On the push to main,
+`publish.yml` compares each package's repo version against its registry:
+
+- versions equal → nothing to do (the workflow is idempotent on every push),
+- repo ahead → publish,
+- registry ahead → fail loudly: someone published out of band.
+
+**Extension channel convention** (VS Code Marketplace): odd minor =
+pre-release channel, even minor = stable. `0.9.x` publishes as pre-release;
+the first `0.10.x` bump would be the first stable release.
+
+## Cut a CLI release
 
 ```sh
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.3.2
+git push origin v0.3.2
 ```
 
-That triggers `.github/workflows/release.yml`. The **tag drives every
-version**: the CLI gets it via ldflags, and the extension / HMI package
-versions are set from the tag at publish time — no manual version bumps.
+That triggers `release.yml`: GoReleaser builds cross-platform CLI binaries
+onto a GitHub Release (the tag versions the CLI via ldflags), and a VSIX —
+built at the extension's own package.json version — is attached for offline
+installs. The tag versions the **Go module and CLI only**; it does not touch
+the extension or HMI versions.
 
-**Versioning convention:** everything shares one line, currently `0.3.x`, and
-we increment the **patch** during active development (`v0.3.1`, `v0.3.2`, …).
-Because `0.x` already means "unstable" in semver, a patch bump is a fine
-signal for "another dev drop." Bump the **minor** (`v0.4.0`) only when you
-want to mark a notable capability jump or a break — `^0.3.0` consumers keep
-auto-updating within `0.3.x` but do *not* cross into `0.4.0`.
+## Guard rails
 
-## What ships, and what it needs
+- `version-sync` (in `ci.yml`) fails any push/PR where npm, the Marketplace,
+  or Open VSX has a higher version than the corresponding package.json.
+- `publish.yml` re-checks the same invariant before publishing.
+- Recovering from out-of-band drift: bump the repo package.json past the
+  registry version and merge.
 
-| Artifact | Channel | Credential | When absent |
-|---|---|---|---|
-| CLI binaries (`cmd/nautilus`) | GitHub Release (GoReleaser) | none — uses `GITHUB_TOKEN` | **still publishes** |
-| VSIX | attached to the GitHub Release | none | **still attached** |
-| VS Code extension | VS Code Marketplace | secret `VSCE_PAT` | step skips |
-| VS Code extension | Open VSX | secret `OVSX_PAT` | step skips |
-| `@joyautomation/nautilus-hmi` | npm | OIDC trusted publisher + var `PUBLISH_HMI=true` | step skips |
-
-So on the very first tag — with **nothing configured** — you get
-cross-platform CLI binaries and the packaged `.vsix` on a GitHub Release.
-Turn on each registry independently when you want it.
-
-npm uses **OIDC trusted publishing**, not a stored token: the job mints a
-short-lived credential GitHub↔npm and publishes with provenance. There's no
-`NPM_TOKEN` to rotate. Because there's no secret to gate on, the HMI publish
-is switched by a repository **variable** `PUBLISH_HMI` instead.
-
-## Before the first *public* release
-
-- **Make the repo public.** Go distribution is decentralized: once public +
-  tagged, `go install github.com/joyautomation/nautilus/cmd/nautilus@latest`
-  and `go get` of the libraries resolve through the module proxy with no
-  further step. (Private works too, but only for you.)
-- ~~Settle the license.~~ Done — Apache-2.0 at the repo root and in the
-  `tools/vscode-iec` and `hmi` packages.
-- **Add the registry secrets** below for whichever channels you want live.
-
-## Registry setup (Settings → Secrets and variables → Actions)
+## Registry credentials (Settings → Secrets and variables → Actions)
 
 - **`VSCE_PAT`** (secret) — VS Code Marketplace. Azure DevOps org, publisher
   `joyautomation` (already in `package.json`), Personal Access Token with
   Marketplace → Manage scope.
 - **`OVSX_PAT`** (secret) — Open VSX. Eclipse Foundation account + signed
   Publisher Agreement, `joyautomation` namespace, access token.
-- **npm — OIDC, no secret.** On npmjs.com, open the package's Settings →
-  Trusted Publisher and point it at repo `joyautomation/nautilus`, workflow
-  `release.yml` (leave environment blank). Then set repository **variable**
-  `PUBLISH_HMI` = `true` (Variables tab) to arm the publish step.
-  - First-publish bootstrap: npm can only attach a trusted publisher to a
-    package that exists. If `@joyautomation/nautilus-hmi` has never been
-    published, do one manual `npm publish` (from `hmi/`, logged in locally),
-    then configure the trusted publisher — every CI publish after that is
-    tokenless.
+- **npm — OIDC, no secret.** On npmjs.com, the package's Settings → Trusted
+  Publisher must point at repo `joyautomation/nautilus`, workflow
+  **`publish.yml`** (npm verifies the workflow *filename*; it was previously
+  configured for `release.yml` — update it or CI publishes will be rejected).
+  Repository **variable** `PUBLISH_HMI` = `true` arms the publish step.
 
 ## Validating changes to the pipeline
 

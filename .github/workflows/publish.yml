@@ -1,0 +1,98 @@
+# Publishes the extension and the HMI kit when their package.json version on
+# main is ahead of the registry. The repo is the source of truth: bump the
+# version in a PR, merge, and this ships it. Nothing publishes when versions
+# already match, so the workflow is idempotent and safe on every push.
+name: publish
+on:
+  push:
+    branches: [main]
+concurrency: publish-main
+
+jobs:
+  hmi:
+    name: HMI kit → npm
+    runs-on: ubuntu-latest
+    # npm trusted publishing (OIDC) — no stored token; see RELEASING.md.
+    permissions:
+      id-token: write
+      contents: read
+    defaults:
+      run: {working-directory: hmi}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Compare repo version with npm
+        id: v
+        run: |
+          repo=$(node -p "require('./package.json').version")
+          reg=$(npm view @joyautomation/nautilus-hmi version 2>/dev/null || echo 0.0.0)
+          echo "repo=$repo npm=$reg"
+          if [ "$repo" = "$reg" ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$(printf '%s\n%s\n' "$repo" "$reg" | sort -V | tail -1)" != "$repo" ]; then
+            echo "::error::npm has $reg, ahead of the repo's $repo — out-of-band publish"; exit 1
+          fi
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+      - if: steps.v.outputs.publish == 'true'
+        run: npm ci
+      - name: Publish to npm (trusted publisher)
+        if: steps.v.outputs.publish == 'true'
+        run: |
+          if [ "${{ vars.PUBLISH_HMI }}" != "true" ]; then
+            echo "repo variable PUBLISH_HMI != true — skipping npm publish"; exit 0
+          fi
+          npm publish --access public --provenance
+
+  extension:
+    name: VS Code extension → Marketplace + Open VSX
+    runs-on: ubuntu-latest
+    defaults:
+      run: {working-directory: tools/vscode-iec}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Compare repo version with the Marketplace
+        id: v
+        run: |
+          repo=$(node -p "require('./package.json').version")
+          reg=$(npx --yes @vscode/vsce show joyautomation.vscode-iec --json 2>/dev/null \
+                | node -p "JSON.parse(require('fs').readFileSync(0)).versions[0].version" \
+                || echo 0.0.0)
+          echo "repo=$repo marketplace=$reg"
+          if [ "$repo" = "$reg" ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$(printf '%s\n%s\n' "$repo" "$reg" | sort -V | tail -1)" != "$repo" ]; then
+            echo "::error::Marketplace has $reg, ahead of the repo's $repo — out-of-band publish"; exit 1
+          fi
+          # VS Code convention: odd minor = pre-release channel, even = stable.
+          minor=$(echo "$repo" | cut -d. -f2)
+          pre=""
+          if [ $((minor % 2)) -eq 1 ]; then pre="--pre-release"; fi
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+          echo "pre=$pre" >> "$GITHUB_OUTPUT"
+      - if: steps.v.outputs.publish == 'true'
+        run: npm ci
+      - name: Publish to VS Code Marketplace
+        if: steps.v.outputs.publish == 'true'
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then echo "VSCE_PAT not set — skipping Marketplace publish"; exit 0; fi
+          npx --yes @vscode/vsce publish ${{ steps.v.outputs.pre }} -p "$VSCE_PAT"
+      - name: Publish to Open VSX
+        if: steps.v.outputs.publish == 'true'
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          if [ -z "$OVSX_PAT" ]; then echo "OVSX_PAT not set — skipping Open VSX publish"; exit 0; fi
+          ovsx_reg=$(curl -s https://open-vsx.org/api/joyautomation/vscode-iec \
+                     | node -p "JSON.parse(require('fs').readFileSync(0)).version" || echo 0.0.0)
+          repo=$(node -p "require('./package.json').version")
+          if [ "$ovsx_reg" = "$repo" ]; then echo "Open VSX already at $repo — skipping"; exit 0; fi
+          npx --yes ovsx publish ${{ steps.v.outputs.pre }} -p "$OVSX_PAT"
