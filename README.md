@@ -548,14 +548,19 @@ Early. This is the extracted, generalized core of a working demo
 - ✅ `examples/hmi-demo` — a SvelteKit operator screen on the HMI kit:
   tank faceplate, trends, setpoint write-back, driver-connection cards,
   and scan diagnostics from one SSE stream
-- 🚧 `hmi/` — SvelteKit component kit (in progress; not yet on npm)
+- ✅ `hmi/` — [`@joyautomation/nautilus-hmi`](https://www.npmjs.com/package/@joyautomation/nautilus-hmi)
+  on npm: Svelte 5 SCADA faceplates (Tank, Gauge, Trend, Pump, Valve…), app
+  primitives, a generic SSE realtime client, and a themeable token layer
+- ✅ `lang/sfc` — Sequential Function Chart: steps, transitions, and actions
+  on the same IR, with LSP support, a graphical VS Code editor, and a batch
+  example (`examples/tank-batch-sfc`)
 
 ## Roadmap
 
 - Retained-memory, redundancy, and historian packages behind clean interfaces
-- Publish `@joyautomation/nautilus-hmi` and add an HMI starter to `nautilus new`
+- An HMI starter in `nautilus new`
 - Native-Go function blocks alongside ST (both lowering to the same IR)
-- FUNCTION_BLOCKs authored in FBD/LD (today: ST); SFC front-end
+- FUNCTION_BLOCKs authored in FBD/LD (today: ST)
 - Vendor-format import (Studio 5000 L5X, TIA, PLCopen XML) → nautilus
 - A test harness for acceptance tests that gate deploys (from mini-scada)
 
