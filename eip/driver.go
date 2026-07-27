@@ -51,6 +51,7 @@ type Driver struct {
 	snapshot  nio.Values // latest polled values (nautilus tag name -> value)
 	connected bool
 	lastErr   error
+	stats     driverStats
 
 	wmu     sync.Mutex
 	pending map[string]any // queued writes (nautilus tag name -> desired value)
@@ -110,7 +111,7 @@ func WithScanClass(name string, rate time.Duration) Option {
 }
 
 // WithTagClass assigns tags to a scan class by glob patterns matched against
-// the binding's nautilus name and its device path ("RTU60_ZONE13_*",
+// the binding's nautilus name and its device path ("Line1_PIT_*",
 // "Program:MainProgram.*"). Assignments live in the driver constructor — not
 // the generated manifest — so re-running `nautilus eip import` never erases
 // polling policy. Later assignments override earlier ones.
@@ -286,17 +287,51 @@ func (d *Driver) Stop() {
 	}
 }
 
-// Health reports connection state for diagnostics/HMI.
-type Health struct {
-	Connected bool
-	LastError string
+// driverStats accumulates the poll-loop counters Health reports. Guarded by
+// d.mu (poll counters are bumped under the lock alongside the snapshot).
+type driverStats struct {
+	polls      uint64
+	pollErrors uint64
+	reconnects uint64
+	sinceMs    int64 // ms epoch of the last connect/disconnect transition
+	lastPollMs int64 // ms epoch of the last successful poll
 }
 
-// Health returns the current connection health.
+// Health reports connection state and poll-loop counters for diagnostics and
+// HMI driver-status cards. The first two fields are the original contract;
+// the rest are additive.
+type Health struct {
+	Connected bool   `json:"connected"`
+	LastError string `json:"lastError,omitempty"`
+
+	Host string `json:"host"`
+	Slot int    `json:"slot"`
+
+	Tags       int    `json:"tags"`       // input bindings polled
+	LeafMode   int    `json:"leafMode"`   // struct bindings read member-wise
+	Polls      uint64 `json:"polls"`      // successful poll cycles
+	PollErrors uint64 `json:"pollErrors"` // failed poll cycles
+	Reconnects uint64 `json:"reconnects"` // transport reconnects
+	SinceMs    int64  `json:"sinceMs"`    // last connect/disconnect (epoch ms)
+	LastPollMs int64  `json:"lastPollMs"` // last successful poll (epoch ms)
+}
+
+// Health returns the current connection health and poll counters.
 func (d *Driver) Health() Health {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	h := Health{Connected: d.connected}
+	h := Health{
+		Connected:  d.connected,
+		Host:       d.host,
+		Slot:       d.slot,
+		Tags:       len(d.inputs),
+		LeafMode:   len(d.leafMode),
+		Polls:      d.stats.polls,
+		PollErrors: d.stats.pollErrors,
+		Reconnects: d.stats.reconnects,
+		SinceMs:    d.stats.sinceMs,
+		LastPollMs: d.stats.lastPollMs,
+	}
 	if d.lastErr != nil {
 		h.LastError = d.lastErr.Error()
 	}
@@ -365,6 +400,7 @@ type session struct {
 func (d *Driver) run(ctx context.Context) {
 	defer close(d.done)
 	backoff := time.Second
+	everConnected := false
 	for ctx.Err() == nil {
 		sess, err := d.connect(ctx)
 		if err != nil {
@@ -383,6 +419,11 @@ func (d *Driver) run(ctx context.Context) {
 		backoff = time.Second
 		d.mu.Lock()
 		d.connected, d.lastErr = true, nil
+		d.stats.sinceMs = time.Now().UnixMilli()
+		if everConnected {
+			d.stats.reconnects++
+		}
+		everConnected = true
 		d.mu.Unlock()
 		d.log.Info("eip: connected", "host", d.host, "slot", d.slot, "tags", len(d.inputs))
 
@@ -391,6 +432,7 @@ func (d *Driver) run(ctx context.Context) {
 		_ = sess.ctrl.Close()
 		d.mu.Lock()
 		d.connected = false
+		d.stats.sinceMs = time.Now().UnixMilli()
 		d.mu.Unlock()
 	}
 }
@@ -542,7 +584,17 @@ func (d *Driver) serve(ctx context.Context, sess *session) {
 
 // pollClass reads one scan class's bindings and refreshes the snapshot.
 // Returns false when the connection is broken.
-func (d *Driver) pollClass(ctx context.Context, sess *session, bindings []TagBinding) bool {
+func (d *Driver) pollClass(ctx context.Context, sess *session, bindings []TagBinding) (ok bool) {
+	defer func() {
+		d.mu.Lock()
+		if ok {
+			d.stats.polls++
+			d.stats.lastPollMs = time.Now().UnixMilli()
+		} else {
+			d.stats.pollErrors++
+		}
+		d.mu.Unlock()
+	}()
 	// Batch elementary scalars through Multiple Service Packets.
 	var batchTags []string
 	batchBind := map[string]TagBinding{}

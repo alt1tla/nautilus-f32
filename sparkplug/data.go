@@ -20,12 +20,19 @@ func (n *Node) scanAndPublish() {
 	now := time.Now()
 
 	// A metric name we've never birthed → rebirth (debounced) so it appears
-	// in a birth before any data references it.
+	// in a birth before any data references it. Tags owned by an OFFLINE
+	// device are exempt: they cannot be born until the device is healthy —
+	// its DBIRTH covers them on the health transition — and rebirthing for
+	// them would storm empty births the whole time the device is down
+	// (e.g. every startup, while the field driver is still connecting).
 	for name := range snap {
 		if _, pub := n.rbeFor(name); !pub {
 			continue
 		}
 		if !n.known[name] {
+			if dev, owned := n.tagOwner[name]; owned && dev != "" && !n.devHealth[dev] {
+				continue
+			}
 			n.scheduleRebirthLocked()
 			n.mu.Unlock()
 			return
@@ -95,6 +102,12 @@ func (n *Node) scanAndPublish() {
 	n.drainStoreForward()
 	for _, p := range pubs {
 		n.cli.Publish(p.topic, 0, false, p.payload).Wait()
+	}
+	if len(pubs) > 0 {
+		n.mu.Lock()
+		n.msgs += uint64(len(pubs))
+		n.lastPubMs = int64(nowMs())
+		n.mu.Unlock()
 	}
 }
 

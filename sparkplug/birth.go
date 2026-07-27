@@ -83,6 +83,7 @@ func (n *Node) birth() error {
 		dbirthPayloads[b.device] = p
 	}
 	n.born = true
+	n.bornMs = int64(nowMs())
 	n.mu.Unlock()
 
 	// Publish outside the lock (paho tokens).

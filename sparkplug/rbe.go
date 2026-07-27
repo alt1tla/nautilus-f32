@@ -21,8 +21,9 @@ type RBE struct {
 	Deadband    float64
 	MinInterval time.Duration
 	MaxInterval time.Duration
-	// Disable publishes every change unconditionally (deadband/min ignored),
-	// for tags where every transition matters (alarms, counters).
+	// Disable publishes every CHANGE unconditionally — deadband and
+	// min-interval are ignored — for tags where every transition matters
+	// (alarms, counters). Unchanged samples still stay quiet.
 	Disable bool
 }
 
@@ -33,15 +34,23 @@ type rbeState struct {
 	primed   bool
 }
 
-// shouldPublish applies the RBE rule to a new value at time now. Rules run in
-// the same order tentacle uses so behavior matches a known-good implementation:
-// disable → first-value → heartbeat → rate-limit → deadband → any-change.
+// shouldPublish applies the RBE rule to a new value at time now:
+// first-value → heartbeat → every-change → rate-limit → deadband → any-change.
 func (r RBE) shouldPublish(st *rbeState, v ir.Value, now time.Time) bool {
-	if r.Disable || !st.primed {
+	if !st.primed {
 		return true
 	}
 	if r.MaxInterval > 0 && now.Sub(st.lastTime) >= r.MaxInterval {
 		return true // heartbeat forces a publish regardless of change
+	}
+	if r.Disable {
+		// Every CHANGE publishes — no deadband, no rate limit — but an
+		// unchanged sample still stays quiet: Sparkplug hosts assume RBE,
+		// and republishing a constant every poll is just broker load.
+		if newF, oldF, ok := numeric(v, st.last); ok {
+			return newF != oldF
+		}
+		return !valuesEqual(v, st.last)
 	}
 	if r.MinInterval > 0 && now.Sub(st.lastTime) < r.MinInterval {
 		return false // rate-limited

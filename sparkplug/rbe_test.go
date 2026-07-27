@@ -43,10 +43,14 @@ func TestRBEDisableAndBoolChange(t *testing.T) {
 	if !(RBE{}).shouldPublish(st, ir.BoolVal(true), time.Unix(1, 0)) {
 		t.Error("bool change should publish")
 	}
-	// Disable ignores min-interval.
+	// Disable (every-change) ignores min-interval on a CHANGE…
 	r := RBE{Disable: true, MinInterval: time.Hour}
-	if !r.shouldPublish(st, ir.BoolVal(false), time.Unix(1, 0)) {
-		t.Error("Disable must always publish")
+	if !r.shouldPublish(st, ir.BoolVal(true), time.Unix(1, 0)) {
+		t.Error("every-change must publish a transition despite min-interval")
+	}
+	// …but an unchanged sample stays quiet (RBE is still RBE).
+	if r.shouldPublish(st, ir.BoolVal(false), time.Unix(1, 0)) {
+		t.Error("every-change must not republish an unchanged value")
 	}
 }
 

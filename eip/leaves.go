@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/joyautomation/nautilus/eip/logix"
 	"github.com/joyautomation/nautilus/lang/ir"
@@ -127,6 +129,7 @@ func (d *Driver) pollLeaves(ctx context.Context, sess *session, bindings []TagBi
 	results := sess.ctrl.ReadTags(ctx, tags, func(t string) int { return sizes[t] })
 	values := map[string]map[string]ir.Value{} // binding -> rel -> value
 	failed := map[string]error{}
+	newlyDead := map[string][]string{} // binding -> members found unreadable this cycle
 	for _, r := range results {
 		s := bySlot[r.Tag]
 		if r.Err != nil {
@@ -143,8 +146,7 @@ func (d *Driver) pollLeaves(ctx context.Context, sess *session, bindings []TagBi
 					d.deadLeaves[s.binding] = map[string]bool{}
 				}
 				d.deadLeaves[s.binding][s.rel] = true
-				d.log.Info("eip: member unreadable, will assemble as zero",
-					"tag", s.binding, "member", r.Tag, "status", fmt.Sprintf("0x%02x", ce.Status))
+				newlyDead[s.binding] = append(newlyDead[s.binding], s.rel)
 				continue
 			}
 			if _, seen := failed[s.binding]; !seen {
@@ -163,6 +165,19 @@ func (d *Driver) pollLeaves(ctx context.Context, sess *session, bindings []TagBi
 			values[s.binding] = map[string]ir.Value{}
 		}
 		values[s.binding][s.rel] = leafValue(lv)
+	}
+
+	// One line per tag, not one per member: unreadable internals (AOI
+	// external-access restrictions) are a property of the tag's type, and
+	// this discovery happens once — later polls skip dead members entirely.
+	for binding, members := range newlyDead {
+		sort.Strings(members)
+		list := strings.Join(members, ", ")
+		if len(list) > 120 {
+			list = list[:120] + "…"
+		}
+		d.log.Info("eip: internal members not externally readable — assembling as zero (external access: none on the AOI/UDT definition)",
+			"tag", binding, "count", len(members), "members", list)
 	}
 
 	for _, b := range bindings {

@@ -65,6 +65,9 @@ type Node struct {
 	bdSeq        uint64
 	seq          uint64
 	born         bool
+	bornMs       int64  // epoch ms of the last NBIRTH
+	msgs         uint64 // DATA messages published (NDATA + DDATA)
+	lastPubMs    int64  // epoch ms of the last DATA publish
 	rbeState     map[string]*rbeState
 	known        map[string]bool // metric names present in the last birth
 	devHealth    map[string]bool
@@ -315,4 +318,76 @@ func sortedNames(snap map[string]ir.Value) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// ── status (diagnostics / HMI) ──────────────────────────────────────────────
+
+// Status is a snapshot of the edge node's health for a driver-status card.
+type Status struct {
+	Group    string `json:"group"`
+	EdgeNode string `json:"edgeNode"`
+	Broker   string `json:"broker"`
+
+	Connected bool `json:"connected"` // MQTT transport up
+	Born      bool `json:"born"`      // NBIRTH published (node online in Sparkplug terms)
+
+	// Primary-host gating (zero values when no PrimaryHostID is configured).
+	PrimaryHost     string `json:"primaryHost,omitempty"`
+	PrimaryHostSeen bool   `json:"primaryHostSeen"`
+	HostOnline      bool   `json:"hostOnline"`
+
+	BdSeq     uint64 `json:"bdSeq"`
+	Seq       uint64 `json:"seq"`
+	Msgs      uint64 `json:"msgs"`      // DATA messages published this session
+	BornMs    int64  `json:"bornMs"`    // epoch ms of the last NBIRTH
+	LastPubMs int64  `json:"lastPubMs"` // epoch ms of the last DATA publish
+
+	StoreForward *StoreForwardStatus `json:"storeForward,omitempty"`
+	Devices      []DeviceStatus      `json:"devices,omitempty"`
+}
+
+// StoreForwardStatus reports the buffer when store-and-forward is enabled.
+type StoreForwardStatus struct {
+	Buffered int `json:"buffered"`
+	Max      int `json:"max"`
+}
+
+// DeviceStatus is one Sparkplug device's birth/health state.
+type DeviceStatus struct {
+	ID     string `json:"id"`
+	Online bool   `json:"online"` // DBIRTH published, not yet DDEATH
+	Tags   int    `json:"tags"`
+}
+
+// Status returns the node's current health snapshot.
+func (n *Node) Status() Status {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	connected := n.cli != nil && n.cli.IsConnected()
+	s := Status{
+		Group:           n.cfg.GroupID,
+		EdgeNode:        n.cfg.EdgeNode,
+		Broker:          n.cfg.BrokerURL,
+		Connected:       connected,
+		Born:            n.born,
+		PrimaryHost:     n.cfg.PrimaryHostID,
+		PrimaryHostSeen: n.hostTS > 0,
+		HostOnline:      n.cfg.PrimaryHostID == "" || n.hostOnline,
+		BdSeq:           n.bdSeq,
+		Seq:             n.seq,
+		Msgs:            n.msgs,
+		BornMs:          n.bornMs,
+		LastPubMs:       n.lastPubMs,
+	}
+	if n.sf != nil {
+		s.StoreForward = &StoreForwardStatus{Buffered: n.sf.len(), Max: n.sf.max}
+	}
+	for _, d := range n.devices {
+		s.Devices = append(s.Devices, DeviceStatus{
+			ID:     d.ID,
+			Online: n.devHealth[d.ID],
+			Tags:   len(d.Tags),
+		})
+	}
+	return s
 }
