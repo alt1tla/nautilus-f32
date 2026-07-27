@@ -251,6 +251,12 @@ func (b *modelBuilder) build() error {
 		if n.isCall {
 			fb := b.fbs[n.inst]
 			for _, a := range n.args {
+				if a.out {
+					// `pin => target` writes outward: show the pin on the
+					// output side; the binding itself reads as call text.
+					ensurePin(&fb.Outputs, a.pin)
+					continue
+				}
 				r, err := b.source(a.val, "b:f."+n.inst+"."+a.pin, nil)
 				if err != nil {
 					return err
@@ -425,6 +431,14 @@ func (b *modelBuilder) source(e expr, baseID string, visited []string) (outRef, 
 			return outRef{node: c.ID, feedback: true}, nil
 		}
 		return outRef{node: b.inputChip(x.name, x.line).ID}, nil
+	case accExpr:
+		// An array-element/member read: a chip labeled with the accessor.
+		// Reading the exact element a coil writes is feedback, same as a
+		// plain variable seal-in.
+		if c, ok := b.coils[x.text]; ok {
+			return outRef{node: c.ID, feedback: true}, nil
+		}
+		return outRef{node: b.inputChip(x.text, x.line).ID}, nil
 	case pinExpr:
 		if fb, ok := b.fbs[x.inst]; ok {
 			ensurePin(&fb.Outputs, x.pin)
@@ -715,6 +729,30 @@ func blockPins(fn string, n int) []string {
 				pins = append(pins, "IN"+strconv.Itoa(i))
 			}
 			return pins
+		}
+	case "SHL", "SHR", "ROL", "ROR":
+		if n == 2 {
+			return []string{"IN", "N"}
+		}
+	case "LEFT", "RIGHT":
+		if n == 2 {
+			return []string{"IN", "L"}
+		}
+	case "MID":
+		if n == 3 {
+			return []string{"IN", "L", "P"}
+		}
+	case "INSERT":
+		if n == 3 {
+			return []string{"IN1", "IN2", "P"}
+		}
+	case "DELETE":
+		if n == 3 {
+			return []string{"IN", "L", "P"}
+		}
+	case "REPLACE":
+		if n == 4 {
+			return []string{"IN1", "IN2", "L", "P"}
 		}
 	}
 	if n == 1 {

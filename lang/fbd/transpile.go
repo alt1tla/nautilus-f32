@@ -51,6 +51,9 @@ func (nl *netlist) order() ([]int, error) {
 		insts := map[string]bool{}
 		if n.isCall {
 			for _, a := range n.args {
+				if a.out {
+					continue // a binding target is written, not read
+				}
 				if err := nl.readsPins(a.val, insts, nil); err != nil {
 					return nil, err
 				}
@@ -134,6 +137,12 @@ func (nl *netlist) readsPins(e expr, into map[string]bool, visited []string) err
 func (nl *netlist) emitCall(n node) (string, error) {
 	var args []string
 	for _, a := range n.args {
+		if a.out {
+			// Output bindings pass through VERBATIM: the target is a write
+			// destination, never inlined as a wire read.
+			args = append(args, fmt.Sprintf("%s => %s", a.pin, exprText(a.val)))
+			continue
+		}
 		e, err := nl.emit(a.val, nil)
 		if err != nil {
 			return "", err
@@ -143,11 +152,24 @@ func (nl *netlist) emitCall(n node) (string, error) {
 	return fmt.Sprintf("%s(%s);", n.inst, strings.Join(args, ", ")), nil
 }
 
+// exprText renders a binding target (ref or accessor) as-written.
+func exprText(e expr) string {
+	switch x := e.(type) {
+	case refExpr:
+		return x.name
+	case accExpr:
+		return x.text
+	}
+	return "_"
+}
+
 // emit renders an FBD expression as ST source, inlining wire references.
 func (nl *netlist) emit(e expr, visited []string) (string, error) {
 	switch x := e.(type) {
 	case litExpr:
 		return x.text, nil
+	case accExpr:
+		return x.text, nil // Levels[2], tbl[i].val — ST accepts it verbatim
 	case pinExpr:
 		return x.inst + "." + x.pin, nil
 	case notExpr:

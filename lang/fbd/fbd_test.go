@@ -209,3 +209,53 @@ END_PROGRAM`
 		t.Errorf("FastOut = %v, want true", h.vals["FastOut"].B)
 	}
 }
+
+// `pin => target` output bindings (IEC formal-call outputs) pass through
+// the netlist verbatim — the one way to capture ET/CV into a variable at
+// the call site (coils are the BOOL path).
+func TestOutputBinding(t *testing.T) {
+	src := `PROGRAM p
+VAR_EXTERNAL Run : BOOL; Done : BOOL; Elapsed : TIME; END_VAR
+FBD
+  t1 : TON(IN := Run, PT := T#5S, ET => Elapsed)
+  Done := t1.Q
+END_FBD
+END_PROGRAM`
+	out, err := Transpile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "ET => Elapsed") {
+		t.Fatalf("binding must emit verbatim:\n%s", out)
+	}
+	if _, err := Compile(src); err != nil {
+		t.Fatalf("does not compile: %v", err)
+	}
+	m, err := Graph(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range m.Nodes {
+		if n.Kind == "fb" && n.Label == "t1" {
+			has := false
+			for _, o := range n.Outputs {
+				if o == "ET" {
+					has = true
+				}
+			}
+			if !has {
+				t.Fatalf("ET must render as an output pin: %+v", n)
+			}
+		}
+	}
+	// A non-variable target is rejected at parse.
+	bad := `PROGRAM p
+VAR_EXTERNAL Run : BOOL; END_VAR
+FBD
+  t1 : TON(IN := Run, ET => 5)
+END_FBD
+END_PROGRAM`
+	if _, err := Transpile(bad); err == nil {
+		t.Fatal("literal binding target must be rejected")
+	}
+}

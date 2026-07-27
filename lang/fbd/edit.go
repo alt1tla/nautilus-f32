@@ -100,6 +100,8 @@ func ApplyEdit(src string, op EditOp) ([]TextEdit, error) {
 		return b.opSetComment(op)
 	case "duplicate":
 		return b.opDuplicate(op)
+	case "retarget":
+		return b.opRetarget(op)
 	}
 	return nil, fmt.Errorf("fbd edit: unknown op %q", op.Type)
 }
@@ -278,6 +280,23 @@ func (b *modelBuilder) refText(nodeID, pin string) (string, error) {
 // ── rename ─────────────────────────────────────────────────────────────────
 
 var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// refTextValid reports whether s parses as a single reference — a plain
+// tag, an array element/member accessor (Levels[2], tbl[i].val), or an
+// inst.pin read — the only texts an edit may write into an argument. The
+// judge is the real netlist parser, so an edit can never produce text the
+// next parse rejects.
+func refTextValid(s string) bool {
+	nl, err := parseNetlist("__t := "+s+"\n", 0)
+	if err != nil || len(nl.nodes) != 1 || nl.nodes[0].isCall {
+		return false
+	}
+	switch nl.nodes[0].source.(type) {
+	case refExpr, accExpr, pinExpr:
+		return true
+	}
+	return false
+}
 
 func (b *modelBuilder) opRename(op EditOp) ([]TextEdit, error) {
 	newName := strings.TrimSpace(op.NewName)
@@ -566,24 +585,29 @@ func (b *modelBuilder) deleteSpan(span exprPos) TextEdit {
 // compile diagnostics own their arity.
 func opArity(fn string) (min, max int) {
 	switch fn {
-	case "AND", "OR", "XOR", "ADD", "MUL", "MIN", "MAX", "MUX":
+	case "AND", "OR", "XOR", "ADD", "MUL", "MIN", "MAX", "MUX", "CONCAT":
 		return 2, -1
-	case "SUB", "DIV", "MOD", "GT", "GE", "LT", "LE", "EQ", "NE":
+	case "SUB", "DIV", "MOD", "GT", "GE", "LT", "LE", "EQ", "NE",
+		"SHL", "SHR", "ROL", "ROR", "EXPT", "ATAN2", "LEFT", "RIGHT", "FIND":
 		return 2, 2
-	case "NOT", "MOVE":
+	case "NOT", "MOVE", "LEN", "TRUNC", "ASIN", "ACOS", "ATAN":
 		return 1, 1
-	case "LIMIT", "SEL":
+	case "LIMIT", "SEL", "MID", "INSERT", "DELETE":
 		return 3, 3
+	case "REPLACE":
+		return 4, 4
 	}
 	return 1, -1
 }
 
 // opDisconnect removes the connection into an input pin. FB pins drop their
 // named argument; extensible operator inputs drop the argument when the
-// block keeps its minimum arity; fixed-arity inputs and coil sources cannot
-// dangle in text form, so those explain what to do instead.
+// block keeps its minimum arity; fixed-arity inputs placehold with `_`; a
+// coil reverts to a floating ghost output (its statement can't dangle in
+// text form, and a placeholder felt like an error, not an unwiring).
 func (b *modelBuilder) opDisconnect(op EditOp) ([]TextEdit, error) {
-	if _, err := b.findEdge(op); err != nil {
+	edge, err := b.findEdge(op)
+	if err != nil {
 		return nil, err
 	}
 	switch {
@@ -612,13 +636,16 @@ func (b *modelBuilder) opDisconnect(op EditOp) ([]TextEdit, error) {
 		return nil, fmt.Errorf("fbd edit: %s has no argument for pin %q", inst, op.ToPin)
 
 	case strings.HasPrefix(op.To, "c:"):
-		// `X := _`: parses, and the undeclared placeholder marks the open pin.
+		// Unwiring a coil reverts BOTH endpoints to floating ghost
+		// references — the inverse of wiring a ghost output. The statement
+		// (with any inline expression) goes away; the coil keeps its canvas
+		// spot as g:out.<target>, and a bare variable source keeps its spot
+		// as g:in.<name>.
 		target := strings.TrimPrefix(op.To, "c:")
 		for _, n := range b.nl.nodes {
 			if !n.isCall && n.target == target {
-				l, c := n.source.pos()
-				el, ec := n.source.end()
-				return []TextEdit{posEdit(exprPos{l, c, el, ec}, "_")}, nil
+				return append([]TextEdit{b.deleteSpan(n.span)},
+					b.ghostRevert(edge, target, op.Entries)...), nil
 			}
 		}
 		return nil, fmt.Errorf("fbd edit: no coil writing %q", target)
@@ -667,6 +694,59 @@ func argRemoval(i, n int, headOf func(int) exprPos, valOf func(int) expr) TextEd
 	start := headOf(i)
 	next := headOf(i + 1)
 	return TextEdit{Line: start.line, Col: start.col, EndLine: next.line, EndCol: next.col}
+}
+
+// opRetarget points a variable chip at a different tag: every argument this
+// chip feeds is rewritten in place — negation bubbles stay (only Inner is
+// swapped) — so `_` open pins and mis-wired reads change tags without
+// redrawing wires. With Value set the new name is declared too (Value = its
+// type, Text = the section): pick-or-create in one gesture. Only this
+// chip's own references change; fan-out cone copies (v:Name#2) are separate
+// chips by construction.
+func (b *modelBuilder) opRetarget(op EditOp) ([]TextEdit, error) {
+	if !strings.HasPrefix(op.Node, "v:") {
+		return nil, fmt.Errorf("fbd edit: %q is not a variable chip", op.Node)
+	}
+	name := strings.TrimSpace(op.NewName)
+	if !refTextValid(name) {
+		return nil, fmt.Errorf("fbd edit: %q is not a valid tag reference (a name, an array element like Levels[2], or inst.pin)", name)
+	}
+	var edits []TextEdit
+	for _, e := range b.m.Edges {
+		if e.From != op.Node {
+			continue
+		}
+		span := e.Arg
+		if span == nil {
+			continue
+		}
+		if e.Inner != nil {
+			// Inner marks where the negated expression STARTS (a point, not
+			// a span); it runs to the argument's end. Replacing just that
+			// keeps the NOT bubble.
+			span = &Span{Line: e.Inner.Line, Col: e.Inner.Col, EndLine: e.Arg.EndLine, EndCol: e.Arg.EndCol}
+		}
+		cur := span.Text
+		if cur == "" {
+			cur = b.slice(span.Line, span.Col, span.EndLine, span.EndCol)
+		}
+		if cur == "" || cur == name {
+			continue
+		}
+		edits = append(edits, spanEdit(span, name))
+	}
+	if op.Value != "" {
+		// Declare-and-wire: "Name : TYPE" in the chip editor.
+		decl, err := b.opDeclareVar(EditOp{NewName: name, Value: op.Value, Text: op.Text})
+		if err != nil {
+			return nil, err
+		}
+		edits = append(edits, decl...)
+	}
+	if len(edits) == 0 {
+		return nil, fmt.Errorf("fbd edit: %q already reads %s", op.Node, name)
+	}
+	return edits, nil
 }
 
 // opAddInput appends an argument to an extensible block — the "+" pin: the

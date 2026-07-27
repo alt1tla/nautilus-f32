@@ -310,10 +310,83 @@ func TestEditDisconnect(t *testing.T) {
 	if !strings.Contains(out, "GT(TempC, _)") {
 		t.Errorf("fixed-arity disconnect must placehold:\n%s", out)
 	}
-	// A coil keeps parsing via the placeholder source.
+	// A coil can't dangle in text form — unwiring deletes the statement
+	// (the coil lives on as a ghost when it has a canvas position; see
+	// TestEditDisconnectCoilGhosts). The wire feeding it keeps its own
+	// statement.
 	out = apply(t, editSrc, mustOp(t, editSrc, EditOp{Type: "disconnect", To: "c:Hot", ToPin: ""}))
-	if !strings.Contains(out, "Hot := _") {
-		t.Errorf("coil disconnect must placehold:\n%s", out)
+	if strings.Contains(out, "Hot :=") {
+		t.Errorf("coil statement must be deleted:\n%s", out)
+	}
+	if !strings.Contains(out, "hot = GT(TempC, 80.0)") || !strings.Contains(out, "END_FBD") {
+		t.Errorf("wire statement and END_FBD must survive:\n%s", out)
+	}
+	if _, err := Graph(out); err != nil {
+		t.Fatalf("source no longer parses after coil disconnect: %v\n%s", err, out)
+	}
+}
+
+// Unwiring a coil reverts both endpoints to floating ghost references — the
+// inverse of wiring a ghost output — instead of leaving `X := _` diagnostics.
+func TestEditDisconnectCoilGhosts(t *testing.T) {
+	src := `PROGRAM Main
+VAR_EXTERNAL
+  Tag1 : REAL; Out1 : REAL;
+END_VAR
+FBD
+  Out1 := Tag1
+  (* @layout
+    c:Out1 312,110
+    v:Tag1 23,119
+  *)
+END_FBD
+END_PROGRAM`
+	out := apply(t, src, mustOp(t, src, EditOp{Type: "disconnect", To: "c:Out1", ToPin: ""}))
+	if strings.Contains(out, "Out1 := Tag1") {
+		t.Errorf("coil statement must be deleted:\n%s", out)
+	}
+	// Both endpoints keep their pinned spots as ghosts, old ids remapped.
+	if !strings.Contains(out, "g:out.Out1 312,110") || !strings.Contains(out, "g:in.Tag1 23,119") {
+		t.Errorf("endpoints must revert to ghost entries:\n%s", out)
+	}
+	if strings.Contains(out, "c:Out1") || strings.Contains(out, "v:Tag1") {
+		t.Errorf("old layout ids must be remapped away:\n%s", out)
+	}
+	m, err := Graph(out)
+	if err != nil {
+		t.Fatalf("source no longer parses: %v\n%s", err, out)
+	}
+	ghosts := map[string]bool{}
+	for _, n := range m.Nodes {
+		if n.Ghost {
+			ghosts[n.ID] = true
+		}
+	}
+	if !ghosts["g:out.Out1"] || !ghosts["g:in.Tag1"] {
+		t.Errorf("both ghost chips must render, got %v", ghosts)
+	}
+
+	// Never-dragged endpoints have no pinned entry — the live positions the
+	// webview rides on the op keep them on the canvas.
+	bare := strings.Replace(src, `  (* @layout
+    c:Out1 312,110
+    v:Tag1 23,119
+  *)
+`, "", 1)
+	out = apply(t, bare, mustOp(t, bare, EditOp{
+		Type: "disconnect", To: "c:Out1", ToPin: "",
+		Entries: []LayoutOpEntry{{Node: "c:Out1", X: 5, Y: 6}, {Node: "v:Tag1", X: 7, Y: 8}},
+	}))
+	if !strings.Contains(out, "g:out.Out1 5,6") || !strings.Contains(out, "g:in.Tag1 7,8") {
+		t.Errorf("live positions must pin the ghosts:\n%s", out)
+	}
+
+	// A stale ghost entry left over from the original wiring dedupes — the
+	// remapped pin wins and the id appears exactly once.
+	stale := strings.Replace(src, "c:Out1 312,110", "c:Out1 312,110\n    g:in.Tag1 1,1", 1)
+	out = apply(t, stale, mustOp(t, stale, EditOp{Type: "disconnect", To: "c:Out1", ToPin: ""}))
+	if strings.Count(out, "g:in.Tag1") != 1 || !strings.Contains(out, "g:in.Tag1 23,119") {
+		t.Errorf("stale ghost entry must dedupe to the remapped position:\n%s", out)
 	}
 }
 
@@ -333,6 +406,50 @@ func TestEditDisconnectExtensible(t *testing.T) {
 	out = apply(t, out, mustOp(t, out, EditOp{Type: "disconnect", To: "b:w.seal", ToPin: "IN1"}))
 	if !strings.Contains(out, "seal = OR(_, Hot)") {
 		t.Errorf("min-arity disconnect must placehold:\n%s", out)
+	}
+}
+
+// Double-clicking a variable chip retargets what it reads: every argument
+// the chip feeds rewrites in place, NOT bubbles stay, and "Name : TYPE"
+// declares the new tag in the same gesture.
+func TestEditRetarget(t *testing.T) {
+	src := `PROGRAM Main
+VAR_EXTERNAL
+  a : BOOL; b : BOOL; c : BOOL; Out : BOOL;
+END_VAR
+FBD
+  w = AND(a, NOT b, a)
+  Out := w
+END_FBD
+END_PROGRAM`
+
+	// Fan-out: both reads of `a` (one chip) move; the NOT on b is untouched.
+	out := apply(t, src, mustOp(t, src, EditOp{Type: "retarget", Node: "v:a", NewName: "c"}))
+	if !strings.Contains(out, "w = AND(c, NOT b, c)") {
+		t.Errorf("both refs must retarget:\n%s", out)
+	}
+
+	// A negated read keeps its bubble — only the name inside changes.
+	out = apply(t, src, mustOp(t, src, EditOp{Type: "retarget", Node: "v:b", NewName: "c"}))
+	if !strings.Contains(out, "w = AND(a, NOT c, a)") {
+		t.Errorf("NOT must survive retarget:\n%s", out)
+	}
+
+	// Declare-and-wire: an undeclared open pin picks a brand-new tag.
+	severed := strings.Replace(src, "AND(a, NOT b, a)", "AND(_, NOT b, a)", 1)
+	out = apply(t, severed, mustOp(t, severed, EditOp{
+		Type: "retarget", Node: "v:_", NewName: "Fresh", Value: "BOOL", Text: "VAR_EXTERNAL",
+	}))
+	if !strings.Contains(out, "AND(Fresh, NOT b, a)") || !strings.Contains(out, "Fresh : BOOL;") {
+		t.Errorf("declare-and-wire must rewrite the ref and add the declaration:\n%s", out)
+	}
+	if _, err := Graph(out); err != nil {
+		t.Fatalf("retargeted source no longer graphs: %v\n%s", err, out)
+	}
+
+	// Same name, no declare → nothing to do; that's an error, not a no-op.
+	if _, err := ApplyEdit(src, EditOp{Type: "retarget", Node: "v:a", NewName: "a"}); err == nil {
+		t.Error("retarget to the same name must error")
 	}
 }
 

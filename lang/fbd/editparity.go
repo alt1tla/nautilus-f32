@@ -38,6 +38,11 @@ func scanComments(src []string, bodyStart int) []commentRun {
 	for i := bodyStart; i < len(src); i++ { // 0-based index i = file line i+1
 		trimmed := strings.TrimSpace(src[i])
 		if strings.EqualFold(trimmed, "END_FBD") {
+			// Close any run that touches END_FBD here — falling through to
+			// the post-loop flush would stamp it with end-of-file and a
+			// later delete/rewrite of that note would take END_FBD (and
+			// everything after) with it.
+			flush(i)
 			break
 		}
 		if strings.HasPrefix(trimmed, "//") {
@@ -112,50 +117,72 @@ func (b *modelBuilder) opDeleteVar(op EditOp) ([]TextEdit, error) {
 
 // opDuplicate copies the statements behind the given node ids, renaming
 // every name they OWN (wires, instances, coil targets) to a fresh _copy
-// name — references between copied statements follow the renames, references
-// to everything else stay. The copies land right after the originals. A
-// renamed coil target is usually undeclared at first: that's the intended
-// breadcrumb (declare it, or retarget the coil), not a blocked edit.
+// name. References BETWEEN copied statements follow the renames (a copied
+// seal-in latch stays a self-consistent loop); references to anything
+// outside the selection sever to `_` open pins — a paste is the element and
+// its intra-selection wiring, never silent taps into the originals' tags
+// (two alarms quietly watching one sensor). Literals stay: they're the
+// element's configuration, not wiring. The copies land right after the
+// originals; the `_`/undeclared diagnostics are the intended breadcrumbs.
 func (b *modelBuilder) opDuplicate(op EditOp) ([]TextEdit, error) {
 	type stmt struct {
-		span exprPos
-		own  []string // names this statement introduces
+		span  exprPos
+		own   []string // names this statement introduces
+		exprs []expr   // argument/source trees — out-of-selection leaves sever
 	}
-	var stmts []stmt
-	seen := map[exprPos]bool{}
-	addSpan := func(span exprPos, own ...string) {
-		if seen[span] {
+	var stmts []*stmt
+	seen := map[exprPos]*stmt{}
+	addSpan := func(span exprPos, exprs []expr, own ...string) {
+		if s, dup := seen[span]; dup {
+			// An FB declaration-with-call arrives via both fbDecls and
+			// nodes — merge so the call's argument trees aren't lost.
+			s.exprs = append(s.exprs, exprs...)
 			return
 		}
-		seen[span] = true
-		stmts = append(stmts, stmt{span: span, own: own})
+		s := &stmt{span: span, own: own, exprs: exprs}
+		seen[span] = s
+		stmts = append(stmts, s)
 	}
 	for _, id := range op.Nodes {
 		switch {
 		case strings.HasPrefix(id, "b:w."):
 			name := strings.TrimPrefix(id, "b:w.")
 			if span, ok := b.nl.wireSpan[name]; ok {
-				addSpan(span, name)
+				addSpan(span, []expr{b.nl.wires[name]}, name)
 			}
 		case strings.HasPrefix(id, "c:"), strings.HasPrefix(id, "b:c."):
 			target := strings.TrimPrefix(strings.TrimPrefix(id, "b:c."), "c:")
-			target = strings.SplitN(target, ".", 2)[0]
+			if !strings.Contains(target, "[") {
+				// Plain targets only: dots here separate the inline-block
+				// argpath, not a member accessor.
+				target = strings.SplitN(target, ".", 2)[0]
+			}
 			target = strings.SplitN(target, "#", 2)[0]
+			// An accessor target (Levels[2], M.Cmd) can't take a _copy
+			// rename and stay parseable — those coils don't duplicate;
+			// retarget the element on the copy's source instead.
+			if !identRe.MatchString(target) {
+				continue
+			}
 			for _, n := range b.nl.nodes {
 				if !n.isCall && n.target == target {
-					addSpan(n.span, target)
+					addSpan(n.span, []expr{n.source}, target)
 				}
 			}
 		case strings.HasPrefix(id, "f:"):
 			inst := strings.TrimPrefix(id, "f:")
 			for _, d := range b.nl.fbDecls {
 				if d.name == inst {
-					addSpan(d.span, inst)
+					addSpan(d.span, nil, inst)
 				}
 			}
 			for _, n := range b.nl.nodes {
 				if n.isCall && n.inst == inst {
-					addSpan(n.span, inst)
+					var args []expr
+					for _, a := range n.args {
+						args = append(args, a.val)
+					}
+					addSpan(n.span, args, inst)
 				}
 			}
 		}
@@ -199,10 +226,18 @@ func (b *modelBuilder) opDuplicate(op EditOp) ([]TextEdit, error) {
 		}
 	}
 
+	owned := map[string]bool{}
+	for name := range renames {
+		owned[name] = true
+	}
 	last := 0
 	var out strings.Builder
 	for _, s := range stmts {
-		text := b.stmtLines(s.span)
+		var cut []exprPos
+		for _, e := range s.exprs {
+			severRefs(e, owned, &cut)
+		}
+		text := b.stmtLines(s.span, cut)
 		for old, fresh := range renames {
 			text = regexp.MustCompile(`\b`+regexp.QuoteMeta(old)+`\b`).ReplaceAllString(text, fresh)
 		}
@@ -214,12 +249,60 @@ func (b *modelBuilder) opDuplicate(op EditOp) ([]TextEdit, error) {
 	return []TextEdit{{Line: last + 1, Col: 1, EndLine: last + 1, EndCol: 1, NewText: out.String()}}, nil
 }
 
+// severRefs collects the spans of reference leaves (variables, wires,
+// inst.pin reads) that point OUTSIDE the copied set — each becomes a `_`
+// open pin in the copy. Literals and intra-selection references stay.
+func severRefs(e expr, owned map[string]bool, out *[]exprPos) {
+	switch v := e.(type) {
+	case refExpr:
+		if !owned[v.name] {
+			*out = append(*out, v.exprPos)
+		}
+	case accExpr:
+		// Element/member reads always point at variables outside the copied
+		// set (accessors can't name wires or instances).
+		*out = append(*out, v.exprPos)
+	case pinExpr:
+		if !owned[v.inst] {
+			*out = append(*out, v.exprPos)
+		}
+	case notExpr:
+		severRefs(v.inner, owned, out)
+	case callExpr:
+		for _, a := range v.args {
+			severRefs(a, owned, out)
+		}
+	}
+}
+
 // stmtLines is the statement's full source lines (newline-terminated) — the
-// copy keeps the author's formatting.
-func (b *modelBuilder) stmtLines(span exprPos) string {
-	var out strings.Builder
+// copy keeps the author's formatting — with the given leaf spans replaced
+// by `_` (applied right-to-left so earlier positions stay valid).
+func (b *modelBuilder) stmtLines(span exprPos, cut []exprPos) string {
+	lines := make([]string, 0, span.endLine-span.line+1)
 	for i := span.line; i <= span.endLine && i-1 < len(b.src); i++ {
-		out.WriteString(b.src[i-1] + "\n")
+		lines = append(lines, b.src[i-1])
+	}
+	sort.Slice(cut, func(i, j int) bool {
+		if cut[i].line != cut[j].line {
+			return cut[i].line > cut[j].line
+		}
+		return cut[i].col > cut[j].col
+	})
+	for _, p := range cut {
+		li := p.line - span.line
+		if li < 0 || li >= len(lines) || p.line != p.endLine {
+			continue
+		}
+		l := lines[li]
+		if p.col-1 > len(l) || p.endCol-1 > len(l) {
+			continue
+		}
+		lines[li] = l[:p.col-1] + "_" + l[p.endCol-1:]
+	}
+	var out strings.Builder
+	for _, l := range lines {
+		out.WriteString(l + "\n")
 	}
 	return out.String()
 }
@@ -287,6 +370,52 @@ func (b *modelBuilder) ghostConsumed(id string) []TextEdit {
 		}
 		return entryID, true
 	})
+}
+
+// ghostRevert is the inverse of ghostConsumed: a disconnected coil (and,
+// when the wire came from a bare variable chip, that chip too) becomes a
+// ghost layout entry again, so both ends stay on the canvas as floating
+// references instead of leaving placeholder diagnostics. Positions come
+// from existing pinned entries, falling back to the live positions the
+// webview rides on the op (a never-dragged endpoint has no pin); an
+// endpoint with neither simply drops — it was only ever a canvas affordance.
+func (b *modelBuilder) ghostRevert(e *Edge, target string, live []LayoutOpEntry) []TextEdit {
+	ghosts := map[string]string{"c:" + target: "g:out." + target}
+	if strings.HasPrefix(e.From, "v:") {
+		// v:Name#2 fan-out copies all read the same variable.
+		name := strings.SplitN(strings.TrimPrefix(e.From, "v:"), "#", 2)[0]
+		if identRe.MatchString(name) {
+			ghosts[e.From] = "g:in." + name
+		}
+	}
+	entries := map[string]layoutEntry{}
+	inline := "b:c." + target
+	for id, pos := range b.layout {
+		if _, isEndpoint := ghosts[id]; isEndpoint {
+			continue // re-added under its ghost id below
+		}
+		if id == inline || strings.HasPrefix(id, inline+".") {
+			continue // inline blocks die with the statement
+		}
+		entries[id] = pos
+	}
+	for old, gid := range ghosts {
+		if pos, ok := b.layout[old]; ok {
+			entries[gid] = pos // the remapped pin wins over any stale ghost entry
+			continue
+		}
+		for _, p := range live {
+			if p.Node == old {
+				entries[gid] = layoutEntry{x: p.X, y: p.Y}
+				break
+			}
+		}
+	}
+	edits, err := b.writeLayout(entries)
+	if err != nil {
+		return nil
+	}
+	return edits
 }
 
 // wireGhostCoil realizes a ghost output reference: dropping a wire on it

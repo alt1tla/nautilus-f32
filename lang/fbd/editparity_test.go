@@ -57,6 +57,49 @@ func TestEditSetComment(t *testing.T) {
 	}
 }
 
+// A comment run touching END_FBD — exactly where the palette inserts new
+// notes — must flush with its own last line, not end-of-file: the regression
+// had delete/rewrite of a trailing note take END_FBD and END_PROGRAM with it.
+func TestEditTrailingComment(t *testing.T) {
+	src := `PROGRAM Main
+VAR_EXTERNAL
+  Start : BOOL;
+  Run : BOOL;
+END_VAR
+FBD
+  seal = OR(Start, Run)
+  Run := seal
+  // trailing note
+END_FBD
+END_PROGRAM`
+
+	// cm:0 must span only its own line.
+	out := apply(t, src, mustOp(t, src, EditOp{Type: "deleteNode", Node: "cm:0"}))
+	if strings.Contains(out, "trailing note") {
+		t.Errorf("comment not deleted:\n%s", out)
+	}
+	for _, keep := range []string{"Run := seal", "END_FBD", "END_PROGRAM"} {
+		if !strings.Contains(out, keep) {
+			t.Fatalf("deleting a trailing comment must not remove %q:\n%s", keep, out)
+		}
+	}
+	if _, err := Graph(out); err != nil {
+		t.Fatalf("source no longer parses after delete: %v\n%s", err, out)
+	}
+
+	// Rewriting shares the run span — it must not swallow END_FBD either.
+	out = apply(t, src, mustOp(t, src, EditOp{Type: "setComment", Node: "cm:0", Text: "kept note"}))
+	if !strings.Contains(out, "// kept note\n") || strings.Contains(out, "trailing note") {
+		t.Errorf("comment not replaced:\n%s", out)
+	}
+	if !strings.Contains(out, "END_FBD") || !strings.Contains(out, "END_PROGRAM") {
+		t.Fatalf("rewriting a trailing comment must keep END_FBD/END_PROGRAM:\n%s", out)
+	}
+	if _, err := Graph(out); err != nil {
+		t.Fatalf("source no longer parses after rewrite: %v\n%s", err, out)
+	}
+}
+
 func TestEditInsertComment(t *testing.T) {
 	// insertStatement accepts pure comment text (lexer-invisible, so the
 	// fragment parses as an empty netlist).
@@ -98,9 +141,11 @@ func TestEditDuplicate(t *testing.T) {
 		Type: "duplicate", Nodes: []string{"b:w.seal", "c:Run"},
 	}))
 	// The latch's feedback read of its own coil follows the rename — the
-	// copy is a self-consistent loop, not a tap into the original.
-	if !strings.Contains(out, "seal_copy = OR(Start, Run_copy)") {
-		t.Errorf("wire copy missing/unrenamed:\n%s", out)
+	// copy is a self-consistent loop, not a tap into the original — while
+	// the out-of-selection tag (Start) severs to an open `_` pin: a paste
+	// must never quietly read the original's tags.
+	if !strings.Contains(out, "seal_copy = OR(_, Run_copy)") {
+		t.Errorf("wire copy missing/unrenamed/unsevered:\n%s", out)
 	}
 	// The copied coil renames its target AND follows the copied wire.
 	if !strings.Contains(out, "Run_copy := seal_copy") {
@@ -113,6 +158,52 @@ func TestEditDuplicate(t *testing.T) {
 	// The result still parses and models.
 	if _, err := Graph(out); err != nil {
 		t.Fatalf("duplicated source no longer graphs: %v", err)
+	}
+}
+
+// Copy severs wiring but keeps configuration: variable/wire/pin references
+// outside the selection open as `_` pins; literals (thresholds, time
+// presets) ride along.
+func TestEditDuplicateSevers(t *testing.T) {
+	src := `PROGRAM Main
+VAR_EXTERNAL
+  TempC : REAL; Started : BOOL;
+END_VAR
+FBD
+  cold = LT(TempC, 62)
+  t1 : TON(IN := cold, PT := T#10S)
+  Started := t1.Q
+END_FBD
+END_PROGRAM`
+
+	// A lone block: tag severs, literal threshold stays.
+	out := apply(t, src, mustOp(t, src, EditOp{Type: "duplicate", Nodes: []string{"b:w.cold"}}))
+	if !strings.Contains(out, "cold_copy = LT(_, 62)") {
+		t.Errorf("single block copy must sever the tag and keep the literal:\n%s", out)
+	}
+	if _, err := Graph(out); err != nil {
+		t.Fatalf("copy no longer graphs: %v\n%s", err, out)
+	}
+
+	// A lone FB instance: wire input severs, time literal stays.
+	out = apply(t, src, mustOp(t, src, EditOp{Type: "duplicate", Nodes: []string{"f:t1"}}))
+	if !strings.Contains(out, "t1_copy : TON(IN := _, PT := T#10S)") {
+		t.Errorf("FB copy must sever the wire and keep the preset:\n%s", out)
+	}
+
+	// A lone coil reading an FB pin: the inst.pin read severs whole.
+	out = apply(t, src, mustOp(t, src, EditOp{Type: "duplicate", Nodes: []string{"c:Started"}}))
+	if !strings.Contains(out, "Started_copy := _") {
+		t.Errorf("coil copy must sever the pin read:\n%s", out)
+	}
+
+	// Copied together, the FB keeps feeding the copied coil.
+	out = apply(t, src, mustOp(t, src, EditOp{Type: "duplicate", Nodes: []string{"f:t1", "c:Started"}}))
+	if !strings.Contains(out, "Started_copy := t1_copy.Q") {
+		t.Errorf("intra-selection pin read must follow the rename:\n%s", out)
+	}
+	if _, err := Graph(out); err != nil {
+		t.Fatalf("copy no longer graphs: %v\n%s", err, out)
 	}
 }
 

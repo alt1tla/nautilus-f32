@@ -46,6 +46,8 @@ type namedArg struct {
 	pin    string
 	pinPos exprPos // the pin-name token, so a disconnect can remove "PIN := expr"
 	val    expr
+	out    bool // `pin => target`: the standard's output binding — val is
+	// the WRITE target (a variable/accessor), not an input source
 }
 
 // expr is the FBD expression tree (blocks, refs, literals, negation). Every
@@ -67,6 +69,11 @@ type refExpr struct { // a variable or wire name
 	exprPos
 	name string
 }
+type accExpr struct { // array/member accessor chain: Levels[2], m[1][2], tbl[i].val
+	exprPos
+	base string // the declared variable at the head of the chain
+	text string // canonical accessor text, emitted into ST verbatim
+}
 type pinExpr struct { // FB output pin: inst.pin
 	exprPos
 	inst, pin string
@@ -86,6 +93,7 @@ type callExpr struct { // operator/function block
 }
 
 func (refExpr) isExpr()  {}
+func (accExpr) isExpr()  {}
 func (pinExpr) isExpr()  {}
 func (litExpr) isExpr()  {}
 func (notExpr) isExpr()  {}
@@ -189,6 +197,19 @@ func (p *netParser) item(nl *netlist) error {
 	name := p.next().Literal
 	lhs := lhsAt
 	lhs.endLine, lhs.endCol = lhsAt.line, lhsAt.col+len(name)
+	// A coil may write an array element or struct member: Levels[2] := x,
+	// M.Cmd := y. The accessor chain becomes part of the target's identity.
+	if p.at(st.TokenLBracket) || p.at(st.TokenDot) {
+		text, err := p.accessorChain(name)
+		if err != nil {
+			return err
+		}
+		if !p.at(st.TokenAssign) {
+			return p.posErr(fmt.Sprintf("expected ':=' after %q (only coils write array elements/members)", text))
+		}
+		name = text
+		lhs = p.span(lhsAt) // the rename anchor covers the whole target
+	}
 	kind := ""
 	nodeIdx := -1
 	switch p.peek().Type {
@@ -271,15 +292,30 @@ func (p *netParser) namedArgs() ([]namedArg, error) {
 		pinAt := p.here()
 		pin := p.next().Literal
 		pinAt.endLine, pinAt.endCol = pinAt.line, pinAt.col+len(pin)
-		if !p.at(st.TokenAssign) {
-			return nil, p.posErr(fmt.Sprintf("FB input %q must use ':=' (named pins)", pin))
+		if p.at(st.TokenOutputAssign) {
+			// `pin => target` — IEC's output binding: capture the pin's
+			// value into a variable at the call site.
+			p.next()
+			e, err := p.expr()
+			if err != nil {
+				return nil, err
+			}
+			switch e.(type) {
+			case refExpr, accExpr:
+			default:
+				return nil, p.posErr(fmt.Sprintf("output binding %q needs a variable target", pin))
+			}
+			args = append(args, namedArg{pin: pin, pinPos: pinAt, val: e, out: true})
+		} else if p.at(st.TokenAssign) {
+			p.next()
+			e, err := p.expr()
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, namedArg{pin: pin, pinPos: pinAt, val: e})
+		} else {
+			return nil, p.posErr(fmt.Sprintf("FB pin %q needs ':=' (input) or '=>' (output binding)", pin))
 		}
-		p.next()
-		e, err := p.expr()
-		if err != nil {
-			return nil, err
-		}
-		args = append(args, namedArg{pin: pin, pinPos: pinAt, val: e})
 		if p.at(st.TokenComma) {
 			p.next()
 		}
@@ -320,6 +356,10 @@ func (p *netParser) primary() (expr, error) {
 	case st.TokenNumber, st.TokenString, st.TokenTimeLiteral, st.TokenTypedLiteral:
 		p.next()
 		return litExpr{exprPos: p.span(at), text: literalText(t)}, nil
+	case st.TokenTrue, st.TokenFalse:
+		// TRUE/FALSE lex as keywords; they're boolean literals here.
+		p.next()
+		return litExpr{exprPos: p.span(at), text: strings.ToUpper(t.Literal)}, nil
 	case st.TokenLParen:
 		p.next()
 		e, err := p.expr()
@@ -340,12 +380,27 @@ func (p *netParser) primary() (expr, error) {
 				return nil, err
 			}
 			return callExpr{exprPos: p.span(at), fn: strings.ToUpper(name), args: args}, nil
-		case st.TokenDot: // FB output pin
+		case st.TokenLBracket: // array element (and any trailing members)
+			text, err := p.accessorChain(name)
+			if err != nil {
+				return nil, err
+			}
+			return accExpr{exprPos: p.span(at), base: name, text: text}, nil
+		case st.TokenDot: // FB output pin, or a member chain with indexes
 			p.next()
 			if !p.at(st.TokenIdent) {
 				return nil, p.posErr("expected a pin name after '.'")
 			}
 			pin := p.next().Literal
+			// A single `.member` stays a pin read (FB outputs, struct
+			// fields); anything longer or indexed is an accessor chain.
+			if p.at(st.TokenLBracket) || p.at(st.TokenDot) {
+				text, err := p.accessorChain(name + "." + pin)
+				if err != nil {
+					return nil, err
+				}
+				return accExpr{exprPos: p.span(at), base: name, text: text}, nil
+			}
 			return pinExpr{exprPos: p.span(at), inst: name, pin: pin}, nil
 		default:
 			// TRUE/FALSE lex as idents in some paths — treat boolean words as
@@ -357,6 +412,52 @@ func (p *netParser) primary() (expr, error) {
 		}
 	}
 	return nil, p.posErr(fmt.Sprintf("unexpected %q in expression", p.peek().Literal))
+}
+
+// accessorChain consumes the remaining `[index]` / `.member` segments of an
+// accessor that started with head, returning the full canonical text
+// ("Levels[2]", "tbl[i].vals[1]"). Indexes are numbers, identifiers, or
+// nested accessors — computed indexes go through a named wire first (the
+// netlist has no inline arithmetic anywhere else either).
+func (p *netParser) accessorChain(head string) (string, error) {
+	text := head
+	for {
+		switch p.peek().Type {
+		case st.TokenLBracket:
+			p.next()
+			idx, err := p.indexText()
+			if err != nil {
+				return "", err
+			}
+			if !p.at(st.TokenRBracket) {
+				return "", p.posErr("expected ']' after the index")
+			}
+			p.next()
+			text += "[" + idx + "]"
+		case st.TokenDot:
+			p.next()
+			if !p.at(st.TokenIdent) {
+				return "", p.posErr("expected a member name after '.'")
+			}
+			text += "." + p.next().Literal
+		default:
+			return text, nil
+		}
+	}
+}
+
+// indexText renders one index expression: a number, or an identifier with
+// its own accessor chain.
+func (p *netParser) indexText() (string, error) {
+	switch t := p.peek(); t.Type {
+	case st.TokenNumber:
+		p.next()
+		return t.Literal, nil
+	case st.TokenIdent:
+		name := p.next().Literal
+		return p.accessorChain(name)
+	}
+	return "", p.posErr(fmt.Sprintf("expected a number or tag as the index, got %q (compute indexes on a named wire first)", p.peek().Literal))
 }
 
 // posArgs parses positional block args "(a, b, ...)".
