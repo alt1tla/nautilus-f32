@@ -6,6 +6,8 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'nautilus',
+      favicon: '/favicon.png',
+      logo: { src: './src/assets/logo.png', alt: 'nautilus' },
       description:
         'SCADA as software — a Go + SvelteKit toolkit for building industrial control and supervisory systems with version control, tests, CI/CD, and code review.',
       social: [
