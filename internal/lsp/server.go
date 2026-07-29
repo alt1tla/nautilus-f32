@@ -7,16 +7,32 @@ import (
 	"io"
 	"net/url"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 
 	"github.com/joyautomation/nautilus/internal/stproject"
 )
 
 // Version is stamped into serverInfo so `nautilus lsp` and the extension
-// can be correlated in logs. It's a var, not a const, so a release build can
-// inject the tag via -ldflags "-X .../internal/lsp.Version=X.Y.Z" (see
-// .goreleaser.yaml); the default is the dev version.
-var Version = "0.3.0"
+// can be correlated in logs. Release binaries inject the tag via -ldflags
+// "-X .../internal/lsp.Version=X.Y.Z" (see .goreleaser.yaml); when nothing
+// is stamped, init derives it from module build info so a
+// `go install ...@vX.Y.Z` build reports the module version instead of a
+// hand-maintained constant that drifts. Plain source builds report "dev".
+var Version = ""
+
+func init() {
+	if Version != "" {
+		return
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if v := strings.TrimPrefix(bi.Main.Version, "v"); v != "" && v != "(devel)" {
+			Version = v
+			return
+		}
+	}
+	Version = "dev"
+}
 
 // Server hosts LSP sessions over a single connection (normally stdio).
 // One Server serves one editor process; document state is per-connection.

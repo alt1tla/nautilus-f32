@@ -12,6 +12,7 @@ import (
 	"text/template"
 
 	"github.com/charmbracelet/huh"
+	"golang.org/x/term"
 )
 
 //go:embed templates
@@ -42,7 +43,8 @@ var identRE = regexp.MustCompile(`[^A-Za-z0-9]+`)
 
 // runNew scaffolds a nautilus controller project, sv-create style: prompt
 // for whatever wasn't given on the command line, then write the tree.
-// --no-input skips the prompts (CI/tests) and takes the defaults.
+// --no-input — or having no terminal to prompt on — skips the prompts and
+// takes the defaults.
 func runNew(args []string) int {
 	fs := flag.NewFlagSet("new", flag.ContinueOnError)
 	module := fs.String("module", "", "Go module path (default: name)")
@@ -96,9 +98,11 @@ func runNew(args []string) int {
 		sc.Replace = abs
 	}
 
-	if *noInput {
+	if *noInput || !stdinIsTTY() {
+		// No terminal to prompt on (CI, docker, piped input) behaves like
+		// --no-input, so the documented one-liners work headlessly.
 		if sc.Name == "" {
-			fmt.Fprintln(os.Stderr, "nautilus new: a name is required with --no-input")
+			fmt.Fprintln(os.Stderr, "nautilus new: a name is required when not prompting (--no-input or no terminal)")
 			return 2
 		}
 	} else {
@@ -148,6 +152,13 @@ func runNew(args []string) int {
   compile diagnostics and live tag values in program.%s while it runs.
 `, sc.Name, sc.Name, dep, sc.Language)
 	return 0
+}
+
+// stdinIsTTY reports whether there's a terminal to prompt on — without one,
+// huh's form would die trying to open /dev/tty. (A real ioctl check, not a
+// char-device stat: /dev/null is a char device too.)
+func stdinIsTTY() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
 // prompt runs the interactive form, pre-filled with current values.
