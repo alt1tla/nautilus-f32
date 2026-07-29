@@ -2,6 +2,12 @@ name: CI
 on:
   push: {branches: [main]}
   pull_request:
+# GOTOOLCHAIN=local makes the pinned go-version a floor, not a suggestion:
+# without it, a dependency bump that raises go.mod's `go` directive gets a
+# newer toolchain auto-downloaded and CI stays green while `go install`
+# breaks for everyone on the documented minimum (this bit v0.4.1).
+env:
+  GOTOOLCHAIN: local
 jobs:
   go:
     name: Go — vet, test, build
