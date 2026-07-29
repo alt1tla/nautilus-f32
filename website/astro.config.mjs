@@ -8,6 +8,7 @@ export default defineConfig({
       title: 'nautilus',
       favicon: '/favicon.png',
       logo: { src: './src/assets/logo.png', alt: 'nautilus' },
+      customCss: ['./src/styles/fonts.css'],
       description:
         'SCADA as software — a Go + SvelteKit toolkit for building industrial control and supervisory systems with version control, tests, CI/CD, and code review.',
       social: [

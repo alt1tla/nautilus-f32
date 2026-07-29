@@ -1,0 +1,21 @@
+/* Brand typography, matching joyautomation.com:
+   Righteous for display, Space Grotesk for body, IBM Plex Mono for code. */
+@import '@fontsource/righteous';
+@import '@fontsource-variable/space-grotesk';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/600.css';
+
+:root {
+  --sl-font: 'Space Grotesk Variable', ui-sans-serif, system-ui, sans-serif;
+  --sl-font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+/* Display face on the big type: hero, page/content titles, and the site
+   wordmark. Smaller headings stay on Space Grotesk for readability. */
+.site-title,
+h1,
+h2,
+.hero h1 {
+  font-family: 'Righteous', var(--sl-font);
+  font-weight: 400;
+}
