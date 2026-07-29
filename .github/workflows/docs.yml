@@ -21,3 +21,50 @@ jobs:
         working-directory: website
       - run: npm run build
         working-directory: website
+
+  # Ships nautilus.joyautomation.com — same pattern as the joyautomation.com
+  # site: image → DO registry, kubectl apply to k8s-joy-1/joy. Skips cleanly
+  # until the DIGITALOCEAN_ACCESS_TOKEN secret exists in this repo.
+  deploy:
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check deploy credentials
+        id: gate
+        env:
+          DO_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+        run: |
+          if [ -z "$DO_TOKEN" ]; then
+            echo "DIGITALOCEAN_ACCESS_TOKEN not set — skipping deploy"
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install doctl
+        if: steps.gate.outputs.go == 'true'
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      - name: Build container image
+        if: steps.gate.outputs.go == 'true'
+        run: docker build -f website/Dockerfile -t registry.digitalocean.com/jar-containers/nautilus-docs:$(echo $GITHUB_SHA | head -c7) .
+      - name: Log in to DigitalOcean Container Registry
+        if: steps.gate.outputs.go == 'true'
+        run: doctl registry login --expiry-seconds 1200
+      - name: Push image
+        if: steps.gate.outputs.go == 'true'
+        run: docker push registry.digitalocean.com/jar-containers/nautilus-docs:$(echo $GITHUB_SHA | head -c7)
+      - name: Set image in manifests
+        if: steps.gate.outputs.go == 'true'
+        run: sed -i 's|<IMAGE>|registry.digitalocean.com/jar-containers/nautilus-docs:'$(echo $GITHUB_SHA | head -c7)'|' website/k8s/deploy.yml
+      - name: Save kubeconfig
+        if: steps.gate.outputs.go == 'true'
+        run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 k8s-joy-1
+      - name: Deploy
+        if: steps.gate.outputs.go == 'true'
+        run: kubectl apply -f website/k8s/deploy.yml
+      - name: Verify rollout
+        if: steps.gate.outputs.go == 'true'
+        run: kubectl rollout status deployment/nautilus-docs -n joy
