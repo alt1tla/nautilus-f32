@@ -2,7 +2,8 @@
 // extension's inline live values, and any other observer can read (and
 // write) the tag store without bespoke wiring:
 //
-//	GET  /             a self-contained live dashboard (landing page)
+//	GET  /             a self-contained live dashboard (landing page); its
+//	                   tag table writes setpoints back through POST /api/tags
 //	GET  /api/state    one JSON Frame — the current tag snapshot
 //	GET  /api/stream   Server-Sent Events; one Frame per broadcast tick
 //	GET  /api/meta     tag descriptions/units, I/O binding, scan target
@@ -40,7 +41,13 @@ import (
 
 // indexHTML is the built-in landing page: a self-contained live dashboard
 // served at "/", so hitting the controller in a browser shows running tags
-// and the API surface instead of a bare 404.
+// and the API surface instead of a bare 404. It is also the zeroth HMI: the
+// tag table writes setpoints through POST /api/tags, which is enough to
+// commission a loop before anyone has built a real operator screen. It
+// offers that only on tags that are neither an Input nor an Output, since
+// those two are reclaimed by the driver and the logic within one scan —
+// which is why /api/meta's I/O lists are load-bearing for the page, not
+// just documentation.
 //
 //go:embed index.html
 var indexHTML []byte

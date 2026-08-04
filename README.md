@@ -102,8 +102,11 @@ go test ./...    # the program's acceptance tests
 ```
 
 Open **http://localhost:8080** for the built-in live dashboard, or
-`GET /api/state` for the raw tag snapshot. Reads are open; set
-`NAUTILUS_TOKEN=<secret>` to require a token on writes.
+`GET /api/state` for the raw tag snapshot. Setpoints are click-to-set right
+in the tag table (BOOLs get a toggle); inputs and outputs are not editable,
+because the driver rewrites one before every scan and the logic rewrites the
+other after. Reads are open; set `NAUTILUS_TOKEN=<secret>` to require a token
+on writes.
 
 **4. Develop in VS Code**
 

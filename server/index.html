@@ -83,6 +83,50 @@
       tr.child td.name .leaf { color: var(--text); }
       .empty { padding: 1.5rem 0.9rem; color: var(--muted); text-align: center; }
 
+      /* Operator-writable values. Only setpoints and state get this: an input
+         is owned by the driver and an output by the logic, and either would be
+         overwritten within one scan. The affordance stays quiet until hover so
+         a dashboard left on a wall doesn't read as a control panel. */
+      td.val.writable { cursor: text; border-radius: 6px; }
+      td.val.writable::after {
+        content: "✎"; margin-left: 0.5rem; color: var(--muted);
+        opacity: 0; transition: opacity 0.12s ease; font-size: 0.85em;
+      }
+      td.val.writable:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+      td.val.writable:hover::after { opacity: 0.75; }
+      td.val.editing::after, td.val.has-err::after { content: none; }
+      td.val.writing { color: var(--muted); }
+      td.val input {
+        width: 7.5rem; padding: 0.15rem 0.4rem; text-align: right;
+        font-family: var(--mono); font-size: 0.9rem; font-variant-numeric: tabular-nums;
+        color: var(--text); background: var(--bg);
+        border: 1px solid var(--accent); border-radius: 6px; outline: none;
+      }
+      /* A writable BOOL is a toggle, not a text field: typing "true" to start a
+         pump is a worse interface than clicking, and the two states are the
+         whole domain. */
+      td.val .toggle {
+        display: inline-flex; align-items: center; gap: 0.4rem;
+        cursor: pointer; user-select: none;
+      }
+      td.val .toggle .track {
+        width: 1.9rem; height: 1.05rem; border-radius: 999px; padding: 2px;
+        background: var(--border); transition: background 0.12s ease;
+      }
+      td.val .toggle .knob {
+        display: block; width: 0.85rem; height: 0.85rem; border-radius: 50%;
+        background: var(--muted); transition: transform 0.12s ease, background 0.12s ease;
+      }
+      td.val .toggle.on .track { background: color-mix(in srgb, var(--good) 55%, transparent); }
+      td.val .toggle.on .knob { background: var(--good); transform: translateX(0.85rem); }
+      td.val .toggle:hover .track { background: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+      /* Write failures land next to the value that failed, not in a corner
+         toast — the tag you just touched is where you are looking. */
+      .write-err {
+        display: block; margin-top: 0.25rem; font-family: var(--sans);
+        font-size: 0.72rem; color: var(--bad); text-align: right; font-style: normal;
+      }
+
       .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 0.6rem; margin-top: 0.75rem; }
       .tile { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 0.6rem 0.8rem; }
       .tile .k { display: block; font-size: 0.65rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
@@ -232,7 +276,7 @@
 
       <section>
         <h2>Live tags</h2>
-        <p class="meta">scan <b id="scans">—</b> · <span id="count">0</span> tags · updated <b id="age">—</b></p>
+        <p class="meta">scan <b id="scans">—</b> · <span id="count">0</span> tags · updated <b id="age">—</b> · setpoints are click-to-set; inputs and outputs are owned by the driver and the logic</p>
         <div class="tags-wrap">
           <table>
             <thead><tr id="tags-head"><th>Tag</th><th style="text-align:right">Value</th></tr></thead>
@@ -286,12 +330,14 @@
       // When present, the table grows Description / Unit / Quality columns.
       let meta = null;
       let inputSet = new Set();
+      let outputSet = new Set();
       let hasMeta = false;
       fetch("/api/meta")
         .then((r) => r.json())
         .then((m) => {
           meta = m;
           inputSet = new Set(m.inputs ?? []);
+          outputSet = new Set(m.outputs ?? []);
           hasMeta = Object.keys(m.tags ?? {}).length > 0 || inputSet.size > 0;
           if (hasMeta) {
             $("tags-head").innerHTML =
@@ -319,6 +365,107 @@
         return stale ? '<td class="q stale">STALE</td>' : '<td class="q good">GOOD</td>';
       }
 
+      // ── writes ───────────────────────────────────────────────────────
+      // Who owns a tag decides whether the operator may set it. The driver
+      // owns inputs and copies them in before every scan; the logic owns
+      // outputs and copies them out after. Writing either one "works" — the
+      // API accepts it — and is then overwritten within a scan, which looks
+      // exactly like a bug. Everything else (setpoints, retained state) is
+      // seeded and never overwritten, so it is genuinely the operator's.
+      //
+      // Derived from meta rather than asked for directly: /api/meta reports
+      // the I/O binding, and not-driver-owned and not-logic-owned is the
+      // whole question. Writes still need a token when one is configured;
+      // the server answers that and the failure is shown on the row.
+      function writable(name) {
+        return name !== null && !inputSet.has(name) && !outputSet.has(name);
+      }
+      function ownerOf(name) {
+        if (inputSet.has(name)) return "driver-owned input — the driver rewrites it before every scan";
+        if (outputSet.has(name)) return "logic-owned output — the program rewrites it after every scan";
+        return "";
+      }
+
+      // While a cell is being edited the table stops re-rendering: a frame
+      // arrives every 250 ms and would otherwise pull the input out from
+      // under the cursor mid-keystroke.
+      let editing = null;
+
+      // Failed writes live in state, not in the DOM. A frame lands every
+      // 250 ms and rebuilds the table, so a note appended to a cell would be
+      // gone before it could be read — which is exactly when you most need it.
+      const writeErrors = new Map(); // tag name → message
+      function failWrite(name, message) {
+        writeErrors.set(name, message);
+        setTimeout(() => {
+          if (writeErrors.get(name) === message) {
+            writeErrors.delete(name);
+            renderTable();
+          }
+        }, 6000);
+        renderTable();
+      }
+
+      async function writeTag(name, value) {
+        writeErrors.delete(name);
+        try {
+          const res = await fetch("/api/tags", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, value }),
+          });
+          if (!res.ok) {
+            const detail = (await res.text()).trim();
+            failWrite(
+              name,
+              res.status === 401 || res.status === 403
+                ? "write refused — this controller requires an auth token"
+                : detail || `write failed (${res.status})`,
+            );
+          }
+        } catch {
+          failWrite(name, "write failed — controller unreachable");
+        }
+      }
+
+      function startEdit(td, name) {
+        if (editing) return;
+        const current = lastTags[name];
+        editing = name;
+        const input = document.createElement("input");
+        input.type = "text";
+        input.value = String(current ?? "");
+        td.textContent = "";
+        td.classList.add("editing");
+        td.appendChild(input);
+        input.focus();
+        input.select();
+
+        let done = false;
+        const finish = async (commit) => {
+          if (done) return;
+          done = true;
+          const raw = input.value.trim();
+          editing = null;
+          td.classList.remove("editing");
+          const n = Number(raw);
+          if (!commit || raw === "" || n === current) {
+            renderTable();
+          } else if (Number.isFinite(n)) {
+            renderTable();
+            writeTag(name, n);
+          } else {
+            failWrite(name, `"${raw}" is not a number`);
+          }
+        };
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") finish(true);
+          else if (e.key === "Escape") finish(false);
+          e.stopPropagation();
+        });
+        input.addEventListener("blur", () => finish(true));
+      }
+
       // rows renders one tag (or member) and, when expanded, its children —
       // structs as .Field rows, arrays as [i] rows, nested to any depth.
       function rows(label, v, path, depth, rootName) {
@@ -334,7 +481,21 @@
         if (!isCompound(v)) {
           const cls = typeof v === "boolean" && !v ? "val bool-false" : "val";
           const rowCls = depth > 0 ? "child" : "";
-          return `<tr class="${rowCls}">${nameCell('<span class="caret"></span>')}${desc}<td class="${cls}">${fmt(v)}</td>${tail}</tr>`;
+          // Only top-level tags are writable: POST /api/tags addresses a tag
+          // by flat name, so a struct member has no address to write to.
+          const canWrite = root !== null && writable(root);
+          const err = root !== null ? writeErrors.get(root) : null;
+          const errNote = err ? `<span class="write-err">${esc(err)}</span>` : "";
+          let cell;
+          if (canWrite && typeof v === "boolean") {
+            cell = `<td class="val"><span class="toggle${v ? " on" : ""}" data-write="${esc(root)}" title="click to toggle"><span class="track"><span class="knob"></span></span>${fmt(v)}</span>${errNote}</td>`;
+          } else if (canWrite && typeof v === "number") {
+            cell = `<td class="${cls} writable${err ? " has-err" : ""}" data-write="${esc(root)}" title="click to set">${fmt(v)}${errNote}</td>`;
+          } else {
+            const why = root !== null ? ownerOf(root) : "";
+            cell = `<td class="${cls}"${why ? ` title="${esc(why)}"` : ""}>${fmt(v)}</td>`;
+          }
+          return `<tr class="${rowCls}">${nameCell('<span class="caret"></span>')}${desc}${cell}${tail}</tr>`;
         }
         const arr = Array.isArray(v);
         const keys = arr ? null : Object.keys(v).sort();
@@ -375,6 +536,7 @@
       }
 
       function renderTable() {
+        if (editing) return; // don't yank the open editor out from under the cursor
         const names = Object.keys(lastTags).sort();
         const nLocals = Object.keys(lastLocals).length;
         $("count").textContent = nLocals ? `${names.length} tags + ${nLocals} local` : String(names.length);
@@ -568,6 +730,17 @@
       }
 
       $("tags").addEventListener("click", (e) => {
+        const toggle = e.target.closest(".toggle[data-write]");
+        if (toggle) {
+          const name = toggle.dataset.write;
+          writeTag(name, !lastTags[name]);
+          return;
+        }
+        const cell = e.target.closest("td.val.writable[data-write]");
+        if (cell) {
+          startEdit(cell, cell.dataset.write);
+          return;
+        }
         const tr = e.target.closest("tr.expandable");
         if (!tr) return;
         const path = tr.dataset.path;
