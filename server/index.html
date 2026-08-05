@@ -343,7 +343,7 @@
             $("tags-head").innerHTML =
               "<th>Tag</th><th>Description</th><th style='text-align:right'>Value</th><th>Unit</th><th>Quality</th>";
           }
-          renderTable();
+          renderTable(true); // three more columns: the existing rows are the wrong shape
         })
         .catch(() => {});
 
@@ -448,15 +448,11 @@
           const raw = input.value.trim();
           editing = null;
           td.classList.remove("editing");
+          renderTable(true); // the editor emptied this cell; put the row back
           const n = Number(raw);
-          if (!commit || raw === "" || n === current) {
-            renderTable();
-          } else if (Number.isFinite(n)) {
-            renderTable();
-            writeTag(name, n);
-          } else {
-            failWrite(name, `"${raw}" is not a number`);
-          }
+          if (!commit || raw === "" || n === current) return;
+          if (Number.isFinite(n)) writeTag(name, n);
+          else failWrite(name, `"${raw}" is not a number`);
         };
         input.addEventListener("keydown", (e) => {
           if (e.key === "Enter") finish(true);
@@ -466,87 +462,172 @@
         input.addEventListener("blur", () => finish(true));
       }
 
-      // rows renders one tag (or member) and, when expanded, its children —
-      // structs as .Field rows, arrays as [i] rows, nested to any depth.
-      function rows(label, v, path, depth, rootName) {
-        const indent = `padding-left:${0.9 + depth * 1.1}rem`;
-        const leaf = esc(label);
-        const nameCell =
-          depth === 0
-            ? (pre) => `<td class="name" style="${indent}">${pre}${leaf}</td>`
-            : (pre) => `<td class="name" style="${indent}">${pre}<span class="leaf">${leaf}</span></td>`;
-        const root = depth === 0 ? rootName : null;
-        const desc = hasMeta ? descCell(root) : "";
-        const tail = hasMeta ? unitCell(root) + qualityCell(root) : "";
-        if (!isCompound(v)) {
-          const cls = typeof v === "boolean" && !v ? "val bool-false" : "val";
-          const rowCls = depth > 0 ? "child" : "";
-          // Only top-level tags are writable: POST /api/tags addresses a tag
-          // by flat name, so a struct member has no address to write to.
-          const canWrite = root !== null && writable(root);
-          const err = root !== null ? writeErrors.get(root) : null;
-          const errNote = err ? `<span class="write-err">${esc(err)}</span>` : "";
-          let cell;
-          if (canWrite && typeof v === "boolean") {
-            cell = `<td class="val"><span class="toggle${v ? " on" : ""}" data-write="${esc(root)}" title="click to toggle"><span class="track"><span class="knob"></span></span>${fmt(v)}</span>${errNote}</td>`;
-          } else if (canWrite && typeof v === "number") {
-            cell = `<td class="${cls} writable${err ? " has-err" : ""}" data-write="${esc(root)}" title="click to set">${fmt(v)}${errNote}</td>`;
-          } else {
-            const why = root !== null ? ownerOf(root) : "";
-            cell = `<td class="${cls}"${why ? ` title="${esc(why)}"` : ""}>${fmt(v)}</td>`;
-          }
-          return `<tr class="${rowCls}">${nameCell('<span class="caret"></span>')}${desc}${cell}${tail}</tr>`;
-        }
-        const arr = Array.isArray(v);
-        const keys = arr ? null : Object.keys(v).sort();
-        const count = arr ? v.length : keys.length;
-        const open = expanded.has(path);
-        const summary = arr ? `[${count} element${count === 1 ? "" : "s"}]` : `{${count} field${count === 1 ? "" : "s"}}`;
-        const rowCls = (depth > 0 ? "child " : "") + "expandable" + (open ? " open" : "");
-        let html = `<tr class="${rowCls}" data-path="${esc(path)}">${nameCell('<span class="caret">▸</span>')}${desc}<td class="val summary">${summary}</td>${tail}</tr>`;
-        if (open) {
-          if (arr) {
-            html += v.map((e, i) => rows(`[${i}]`, e, `${path}[${i}]`, depth + 1, rootName)).join("");
-          } else {
-            html += keys.map((k) => rows("." + k, v[k], `${path}.${k}`, depth + 1, rootName)).join("");
-          }
-        }
-        return html;
-      }
-
       let lastTags = {};
       let lastLocals = {};
       let lastScan = null;
 
-      // localRows renders retained program locals (integral, latches, FB
-      // instances) beneath the tags — the watch inside the POU. They aren't
-      // tags: no meta, no writes, quality n/a.
-      function localRows() {
-        const names = Object.keys(lastLocals).sort();
-        return names
-          .map((n) => {
-            let body = rows(n, lastLocals[n], "local:" + n, 0, null);
-            body = body.replace(/^<tr class="/, '<tr class="localrow ');
-            if (hasMeta) {
-              body = body.replace('<td class="desc"></td>', '<td class="desc local">program local</td>');
-            }
-            return body;
-          })
-          .join("");
+      // ── the table ────────────────────────────────────────────────────
+      // A frame lands every 250 ms. Rebuilding the table's markup that often
+      // destroys the very cell the pointer is over, and that breaks both
+      // hover and clicking: the replacement node starts the hover transition
+      // from zero (the pencil strobes), and a mousedown/mouseup pair that
+      // straddles a frame lands on two different nodes, so no click event is
+      // ever dispatched. Roughly one press in four went nowhere.
+      //
+      // So the table is described as a flat list of row models first, and a
+      // frame patches values into the rows that already exist. The markup is
+      // only rebuilt when the SHAPE changes — a tag appears or disappears, a
+      // struct is expanded, a value changes type. rowSig is that shape.
+
+      // rowModels flattens one tag (or member) and, when expanded, its
+      // children — structs as .Field rows, arrays as [i] rows, to any depth.
+      function rowModels(out, label, v, path, depth, rootName, local) {
+        // Only top-level tags are writable: POST /api/tags addresses a tag by
+        // flat name, so a struct member has no address to write to.
+        const root = depth === 0 ? rootName : null;
+        if (!isCompound(v)) {
+          const canWrite = root !== null && writable(root);
+          out.push({
+            key: path, label, depth, root, local, value: v,
+            kind: canWrite && typeof v === "boolean" ? "toggle"
+              : canWrite && typeof v === "number" ? "num"
+              : "plain",
+          });
+          return out;
+        }
+        const arr = Array.isArray(v);
+        const keys = arr ? null : Object.keys(v).sort();
+        const n = arr ? v.length : keys.length;
+        const open = expanded.has(path);
+        out.push({
+          key: path, label, depth, root, local, open, kind: "summary",
+          value: arr ? `[${n} element${n === 1 ? "" : "s"}]`
+                     : `{${n} field${n === 1 ? "" : "s"}}`,
+        });
+        if (open) {
+          if (arr) v.forEach((e, i) => rowModels(out, `[${i}]`, e, `${path}[${i}]`, depth + 1, rootName, local));
+          else keys.forEach((k) => rowModels(out, "." + k, v[k], `${path}.${k}`, depth + 1, rootName, local));
+        }
+        return out;
       }
 
-      function renderTable() {
+      // Tags, then retained program locals (integral, latches, FB instances)
+      // — the watch inside the POU. Locals aren't tags: no meta, no writes,
+      // quality n/a.
+      function tableModel() {
+        const out = [];
+        Object.keys(lastTags).sort().forEach((n) => rowModels(out, n, lastTags[n], n, 0, n, false));
+        Object.keys(lastLocals).sort().forEach((n) => rowModels(out, n, lastLocals[n], "local:" + n, 0, null, true));
+        return out;
+      }
+
+      const rowSig = (ms) =>
+        ms.map((m) => `${m.key} ${m.kind} ${m.depth} ${m.local ? 1 : 0}`).join("");
+
+      // Every value cell holds its text in a .tv span so a patch can rewrite
+      // the value without touching the cell itself.
+      function valueCell(m) {
+        const err = m.root !== null ? writeErrors.get(m.root) : null;
+        const note = err ? `<span class="write-err">${esc(err)}</span>` : "";
+        if (m.kind === "toggle") {
+          return `<td class="val"><span class="toggle${m.value ? " on" : ""}" data-write="${esc(m.root)}" title="click to toggle">` +
+            `<span class="track"><span class="knob"></span></span><span class="tv">${fmt(m.value)}</span></span>${note}</td>`;
+        }
+        if (m.kind === "num") {
+          return `<td class="val writable${err ? " has-err" : ""}" data-write="${esc(m.root)}" title="click to set">` +
+            `<span class="tv">${fmt(m.value)}</span>${note}</td>`;
+        }
+        if (m.kind === "summary") {
+          return `<td class="val summary"><span class="tv">${esc(m.value)}</span></td>`;
+        }
+        const falsey = typeof m.value === "boolean" && !m.value ? " bool-false" : "";
+        const why = m.root !== null ? ownerOf(m.root) : "";
+        return `<td class="val${falsey}"${why ? ` title="${esc(why)}"` : ""}><span class="tv">${fmt(m.value)}</span></td>`;
+      }
+
+      function rowHTML(m) {
+        const cls = [
+          m.depth > 0 ? "child" : "",
+          m.kind === "summary" ? "expandable" : "",
+          m.kind === "summary" && m.open ? "open" : "",
+          m.local && m.depth === 0 ? "localrow" : "",
+        ].filter(Boolean).join(" ");
+        const leaf = m.depth === 0 ? esc(m.label) : `<span class="leaf">${esc(m.label)}</span>`;
+        const name = `<td class="name" style="padding-left:${0.9 + m.depth * 1.1}rem">` +
+          `<span class="caret">${m.kind === "summary" ? "▸" : ""}</span>${leaf}</td>`;
+        const desc = !hasMeta ? ""
+          : m.local && m.depth === 0 ? '<td class="desc local">program local</td>'
+          : descCell(m.root);
+        const tail = hasMeta ? unitCell(m.root) + qualityCell(m.root) : "";
+        const data = m.kind === "summary" ? ` data-path="${esc(m.key)}"` : "";
+        return `<tr class="${cls}"${data}>${name}${desc}${valueCell(m)}${tail}</tr>`;
+      }
+
+      // patchRow updates one existing row in place. Nothing here replaces a
+      // node — every write is to textContent or classList, so the cell under
+      // the pointer keeps its identity, its hover state, and its click.
+      function patchRow(tr, m) {
+        const td = tr.children[hasMeta ? 2 : 1];
+        const tv = td.querySelector(".tv");
+        if (m.kind === "summary") {
+          if (tv) tv.textContent = m.value;
+          tr.classList.toggle("open", !!m.open);
+        } else {
+          if (tv) tv.textContent = fmt(m.value);
+          if (m.kind === "toggle") {
+            const t = td.querySelector(".toggle");
+            if (t) t.classList.toggle("on", !!m.value);
+          } else if (m.kind === "plain") {
+            td.classList.toggle("bool-false", typeof m.value === "boolean" && !m.value);
+          }
+        }
+        if (m.kind === "toggle" || m.kind === "num") {
+          const err = m.root !== null ? writeErrors.get(m.root) : null;
+          let note = td.querySelector(".write-err");
+          if (err && !note) {
+            note = document.createElement("span");
+            note.className = "write-err";
+            td.appendChild(note);
+          } else if (note && !err) {
+            note.remove();
+            note = null;
+          }
+          if (note) note.textContent = err;
+          if (m.kind === "num") td.classList.toggle("has-err", !!err);
+        }
+        if (hasMeta && m.root !== null) {
+          const q = tr.lastElementChild;
+          const stale = inputSet.has(m.root) && lastScan && !lastScan.ioHealthy;
+          q.className = stale ? "q stale" : "q good";
+          q.textContent = stale ? "STALE" : "GOOD";
+        }
+      }
+
+      let lastRowSig = null;
+      // force rebuilds even when the shape is unchanged — for the two things
+      // that change the markup without changing the model: meta arriving
+      // (three more columns) and an editor closing (it emptied its own cell).
+      function renderTable(force) {
         if (editing) return; // don't yank the open editor out from under the cursor
-        const names = Object.keys(lastTags).sort();
+        const models = tableModel();
+        const nTags = Object.keys(lastTags).length;
         const nLocals = Object.keys(lastLocals).length;
-        $("count").textContent = nLocals ? `${names.length} tags + ${nLocals} local` : String(names.length);
-        const span = hasMeta ? 5 : 2;
-        if (names.length === 0 && nLocals === 0) {
-          $("tags").innerHTML = `<tr><td colspan="${span}" class="empty">no tags</td></tr>`;
+        $("count").textContent = nLocals ? `${nTags} tags + ${nLocals} local` : String(nTags);
+        const body = $("tags");
+        if (!models.length) {
+          if (force || lastRowSig !== "") {
+            body.innerHTML = `<tr><td colspan="${hasMeta ? 5 : 2}" class="empty">no tags</td></tr>`;
+            lastRowSig = "";
+          }
           return;
         }
-        $("tags").innerHTML =
-          names.map((n) => rows(n, lastTags[n], n, 0, n)).join("") + localRows();
+        const sig = rowSig(models);
+        if (force || sig !== lastRowSig || body.children.length !== models.length) {
+          body.innerHTML = models.map(rowHTML).join("");
+          lastRowSig = sig;
+          return;
+        }
+        for (let i = 0; i < models.length; i++) patchRow(body.children[i], models[i]);
       }
 
       // ── scan diagnostics ─────────────────────────────────────────────
