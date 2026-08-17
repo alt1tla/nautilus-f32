@@ -36,9 +36,12 @@ FBD
   spNow = SEL(EcoMode, TempSP, TempSPEco)
 
   // TIC-101: temperature PI with anti-windup clamp; integral is retained
-  // state fed back from its own coil.
+  // state fed back from its own coil. The cap is sized to the loop's job:
+  // at setpoint the integral only carries the standing heat loss (~17 % of
+  // heater capacity), so letting it wind higher during a rise just stores
+  // overshoot — the settle test's stay-there step proves it.
   e = SUB(spNow, TempC)
-  integral := LIMIT(0.0, ADD(integral, MUL(Ki, e, ScanDtS)), 100.0)
+  integral := LIMIT(0.0, ADD(integral, MUL(Ki, e, ScanDtS)), 30.0)
   Heater := LIMIT(0.0, ADD(MUL(Kp, e), integral), 100.0)
 
   // TAL-101: low-temperature alarm with a 10 s on-delay.

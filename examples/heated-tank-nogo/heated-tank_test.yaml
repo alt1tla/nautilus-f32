@@ -6,7 +6,7 @@
 # The fixture is nautilus.yaml: tasks, scan rates, tag roles, and seeds all
 # come from the manifest that deploys, so nothing here can drift away from
 # what actually runs. Time is virtual, so a 10-second alarm delay and a
-# 32-second loop response are asserted exactly, in milliseconds.
+# minutes-long loop response are asserted exactly, in milliseconds.
 
 tolerance: 0.5 # default ± for `near` in this file
 
@@ -66,6 +66,9 @@ tests:
           - ABS(TempC - TempSP) < 0.5 # relational: tracks the setpoint tag
         always:
           Heater: { between: [0.0, 100.0] } # the clamp never breaks
+      - advance: 120s # settled is not done — stay there
+        always:
+          TempC: { lt: 73.0 } # a degree of overshoot is the budget
 
   - name: high-temp interlock sounds the horn until the operator acks
     suspend: [sim]
