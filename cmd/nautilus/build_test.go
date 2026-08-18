@@ -28,7 +28,7 @@ func TestBuildEmbedRoundTrip(t *testing.T) {
 	os.WriteFile(filepath.Join(proj, "program.st"), []byte("PROGRAM P\nEND_PROGRAM"), 0o644)
 
 	out := filepath.Join(dir, "out")
-	if err := emitBinary(runner, proj, out, ""); err != nil {
+	if err := emitBinary(runner, proj, out, "", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -72,7 +72,7 @@ func TestBuildEmbedRoundTrip(t *testing.T) {
 	// Rebuild from the BUILT binary with a changed project.
 	os.WriteFile(filepath.Join(proj, "program.st"), []byte("PROGRAM P2\nEND_PROGRAM"), 0o644)
 	out2 := filepath.Join(dir, "out2")
-	if err := emitBinary(out, proj, out2, ""); err != nil {
+	if err := emitBinary(out, proj, out2, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	prefix2, files2 := read(out2)
@@ -81,5 +81,45 @@ func TestBuildEmbedRoundTrip(t *testing.T) {
 	}
 	if files2["program.st"] != "PROGRAM P2\nEND_PROGRAM" {
 		t.Fatal("rebuild must carry the NEW project")
+	}
+}
+
+// A build's captured history rides the archive as .history, and loadHistory
+// decodes it back — the built-binary side of GET /api/program/history.
+func TestBuildEmbedsHistory(t *testing.T) {
+	dir := t.TempDir()
+	runner := filepath.Join(dir, "runner")
+	if err := os.WriteFile(runner, []byte("FAKE-RUNNER"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	proj := filepath.Join(dir, "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(proj, "nautilus.yaml"), []byte("name: t\ntasks:\n  - program: p.st\n"), 0o644)
+	os.WriteFile(filepath.Join(proj, "p.st"), []byte("PROGRAM P\nEND_PROGRAM"), 0o644)
+
+	hist := []byte(`{"built":"abc123","commits":[{"sha":"abc123","short":"abc123x","subject":"s"}]}`)
+	out := filepath.Join(dir, "out")
+	if err := emitBinary(runner, proj, out, "", hist); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	st, _ := f.Stat()
+	off, ok := embeddedOffset(f, st.Size())
+	if !ok {
+		t.Fatal("no embedded project")
+	}
+	zr, err := zip.NewReader(io.NewSectionReader(f, off, st.Size()-16-off), st.Size()-16-off)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := loadHistory(zr, "")()
+	if h == nil || h.Built != "abc123" || len(h.Commits) != 1 || h.Commits[0].Short != "abc123x" {
+		t.Fatalf("embedded history decode: %+v", h)
 	}
 }

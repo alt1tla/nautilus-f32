@@ -14,6 +14,10 @@ import (
 //	PUT  /api/program           compile + warm-swap new source (gated)
 //	POST /api/program/rollback  one-step stateful undo of the last swap (gated)
 //
+// The provenance pair — GET /api/program/history and POST
+// /api/program/activate (warm-swap to any captured commit) — lives in
+// history.go.
+//
 // Programs are addressed by POU name — `PROGRAM <Name>` is a program's
 // identity. GET/rollback take `?pou=<name>` (or `?task=<taskName>`); a PUT
 // routes automatically by the POU name in the submitted source, so an
@@ -170,6 +174,9 @@ func (s *Server) handlePutProgram(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 		return
 	}
+	// A hand edit orphans any "running commit X" claim — the source now
+	// matches no captured commit until the next activation.
+	s.setActive("")
 	writeJSON(w, http.StatusOK, struct {
 		runtime.SwapReport
 		Task string `json:"task"`
@@ -191,6 +198,7 @@ func (s *Server) handleRollback(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
+	s.setActive("")
 	writeJSON(w, http.StatusOK, report)
 }
 

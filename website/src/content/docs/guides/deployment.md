@@ -54,3 +54,13 @@ it needs one secret only you can add: a namespace-scoped kubeconfig as
 Rolling by sha rather than `latest` is deliberate: a Deployment that says
 `:latest` redeploys to *whatever was pushed most recently*, which is a
 statement about time, not about code. A sha is a statement about code.
+
+## The artifact answers for itself
+
+`nautilus build` embeds the project's git history in the binary it emits —
+`— N commits of program history embedded` on the build line. The deployed
+controller then serves `GET /api/program/history` with no git, no `.git`
+dir, and no network: which commit it was built from, every change as a
+diff, and the ability to warm-swap back to any of them. The loop this page
+closes — commit to running controller — gets its mirror: see
+[Program history](/guides/program-history/).

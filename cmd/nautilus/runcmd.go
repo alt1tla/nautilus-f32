@@ -11,6 +11,7 @@ import (
 	"archive/zip"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -21,9 +22,11 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/joyautomation/nautilus/acceptance"
 	"github.com/joyautomation/nautilus/internal/project"
+	"github.com/joyautomation/nautilus/internal/vcs"
 	"github.com/joyautomation/nautilus/leader"
 	"github.com/joyautomation/nautilus/retain"
 	"github.com/joyautomation/nautilus/runtime"
@@ -31,7 +34,10 @@ import (
 )
 
 // runProject hosts a loaded project: scan loop + tag API, Ctrl+C to stop.
-func runProject(fsys fs.FS, manifest, label string) int {
+// dir is the project's on-disk path when running from a checkout ("" for a
+// built binary's embedded project) — it's where live git history capture
+// looks; a built binary carries its history in the archive instead.
+func runProject(fsys fs.FS, manifest, label, dir string) int {
 	proj, err := project.Load(fsys, manifest)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "nautilus run:", err)
@@ -111,6 +117,18 @@ func runProject(fsys fs.FS, manifest, label string) int {
 	if el != nil {
 		sopts.Cluster = el
 	}
+	// Program provenance: a built binary decodes the history its archive
+	// carries; a checkout captures live from git. Lazy (first request pays,
+	// not startup) and nil-safe — no repo just means an empty history.
+	hist := loadHistory(fsys, dir)
+	sopts.History = hist
+	sopts.SourcesAt = func(sha string) (map[string]string, error) {
+		snap, ok := vcs.SnapshotFS(hist(), sha)
+		if !ok {
+			return nil, fmt.Errorf("no file snapshot captured for %s", sha)
+		}
+		return project.Sources(snap, manifest)
+	}
 	srv := server.New(rt, sopts)
 	go srv.Run(ctx)
 
@@ -172,7 +190,38 @@ func runRun(args []string) int {
 	if fs.NArg() > 0 {
 		dir = fs.Arg(0)
 	}
-	return runProject(os.DirFS(dir), *manifest, "")
+	return runProject(os.DirFS(dir), *manifest, "", dir)
+}
+
+// historyMarker is the archive entry holding a built binary's captured git
+// history (a server.ProgramHistory as JSON). Dot-named like .manifest: the
+// archive walk skips dotfiles, so nothing in a project can collide with it,
+// and `unzip -p <binary> .history` answers "what commits shipped in this?".
+const historyMarker = ".history"
+
+// loadHistory resolves where this controller's program history comes from:
+// the archive entry a `nautilus build` embedded, or a live git capture of
+// the checkout `nautilus run` was pointed at. The work happens once, on
+// first use — GET /api/program/history triggers it, startup never waits.
+func loadHistory(fsys fs.FS, dir string) func() *server.ProgramHistory {
+	return sync.OnceValue(func() *server.ProgramHistory {
+		if raw, err := fs.ReadFile(fsys, historyMarker); err == nil {
+			var h server.ProgramHistory
+			if json.Unmarshal(raw, &h) == nil {
+				return &h
+			}
+			return nil
+		}
+		if dir == "" {
+			return nil
+		}
+		h, err := vcs.Capture(dir, vcs.DefaultDepth)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "program history:", err, "(continuing without it)")
+			return nil
+		}
+		return h // nil when dir isn't a git checkout — an empty history
+	})
 }
 
 // manifestFlagUsage documents -m on every command that loads a project.
@@ -222,12 +271,40 @@ func runBuild(args []string) int {
 		fmt.Fprintln(os.Stderr, "nautilus build:", err)
 		return 1
 	}
-	if err := emitBinary(self, dir, name, *manifest); err != nil {
+	// Provenance rides the artifact: capture the project's git history here,
+	// where .git exists, so the deployed controller can answer for its own
+	// commits from an air-gapped network. No repo is fine — the endpoint
+	// just serves an empty history.
+	history, note := captureHistory(dir)
+	if err := emitBinary(self, dir, name, *manifest, history); err != nil {
 		fmt.Fprintln(os.Stderr, "nautilus build:", err)
 		return 1
 	}
-	fmt.Printf("built %s — a self-contained controller (run it like any binary; NAUTILUS_ADDR/NAUTILUS_TOKEN apply)\n", name)
+	fmt.Printf("built %s — a self-contained controller (run it like any binary; NAUTILUS_ADDR/NAUTILUS_TOKEN apply)%s\n", name, note)
 	return 0
+}
+
+// captureHistory snapshots dir's git history as the JSON `.history` embeds,
+// plus a note for the build line. Failures degrade to no history — a build
+// must not fail because provenance couldn't be read.
+func captureHistory(dir string) ([]byte, string) {
+	h, err := vcs.Capture(dir, vcs.DefaultDepth)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "nautilus build: program history:", err, "(continuing without it)")
+		return nil, ""
+	}
+	if h == nil {
+		return nil, " — no git history embedded (not a repo)"
+	}
+	raw, err := json.Marshal(h)
+	if err != nil {
+		return nil, ""
+	}
+	note := fmt.Sprintf(" — %d commits of program history embedded", len(h.Commits))
+	if h.BuiltDirty {
+		note += " (working tree dirty)"
+	}
+	return raw, note
 }
 
 // manifestMarker records which manifest a built binary loads, for projects
@@ -248,7 +325,7 @@ func embeddedManifest(fsys fs.FS) string {
 	return strings.TrimSpace(string(raw))
 }
 
-func emitBinary(self, dir, out, manifest string) error {
+func emitBinary(self, dir, out, manifest string, history []byte) error {
 	src, err := os.Open(self)
 	if err != nil {
 		return err
@@ -307,6 +384,15 @@ func emitBinary(self, dir, out, manifest string) error {
 			return err
 		}
 		if _, err := w.Write([]byte(manifest)); err != nil {
+			return err
+		}
+	}
+	if len(history) > 0 {
+		w, err := zw.Create(historyMarker)
+		if err != nil {
+			return err
+		}
+		if _, err := w.Write(history); err != nil {
 			return err
 		}
 	}

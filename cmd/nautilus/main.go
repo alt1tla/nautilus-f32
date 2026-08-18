@@ -66,7 +66,7 @@ func main() {
 	// rides embedded on the executable's tail, and running it hosts the
 	// scan loop directly (NAUTILUS_CLI=1 recovers the CLI).
 	if fsys, ok := embeddedProject(); ok {
-		os.Exit(runProject(fsys, embeddedManifest(fsys), "built"))
+		os.Exit(runProject(fsys, embeddedManifest(fsys), "built", ""))
 	}
 	if len(os.Args) < 2 {
 		fmt.Fprint(os.Stderr, usage)

@@ -87,18 +87,28 @@ Done 2026-08-17: the three mini-scada seams — `retain/` (file + ConfigMap),
 `leader/` (Lease elector; `runtime.Coordinator` gates the scan loop),
 `hist/` + `nautilus historian` (Postgres, `hist.Sink`). Manifest sections
 `retain:`/`redundancy:`/`server.historian`; standby replicas proxy their
-API to the leader. mini-scada source of truth: `/home/joyja/mini-scada-build`
+API to the leader. Also the CD scaffold: `nautilus new --deploy` emits
+Dockerfile + redundant-pair k8s + deploy workflow (commit-to-running-
+controller). mini-scada source of truth: `/home/joyja/mini-scada-build`
 (NOT ~/Development/mini-scada — and read-only, never modify it).
+
+Done 2026-08-18: **program history + activation** — the controller serves
+its own git provenance. `internal/vcs` captures commits + diffs + deduped
+file snapshots (git blob ids); `nautilus build` embeds it as the `.history`
+archive entry, `nautilus run` captures live (lazily, on first request);
+`GET /api/program/history` / `POST /api/program/activate {sha}` warm-swap
+the whole resource to any captured commit (validate-all-then-swap-all,
+topology mismatch → 409 "deploy that commit instead").
+`project.Sources(fsys, manifest)` composes task→source from any fs.FS —
+pointed at a snapshot it rebuilds the past exactly as boot composes the
+present. Guide: website .../guides/program-history.md.
 
 Next, in rough priority:
 
-1. **CD scaffold** — container target for `nautilus build`, a deploy job in
-   the scaffolded CI (build image → push → rollout), and a worked k8s
-   example (Deployment with replicas + RBAC from the redundancy guide).
-   This is the commit-to-running-controller story the content calendar's
-   wk 14/N-14/N-16 need.
-2. **Grow the server package** — program-history endpoint (mini-scada's
-   `internal/server` has the shapes; get/set + hot-swap already exist).
-3. **Native-Go function blocks** alongside ST (both lowering to the IR).
-4. **Extension 0.10.0** — first stable-channel Marketplace release, when the
+1. **HMI Versions page** — render /api/program/history in
+   @joyautomation/nautilus-hmi (mini-scada's Versions page is the
+   reference): commit list, diffs, activate button. The demo moment for
+   the content calendar ("your PLC shows its own git log").
+2. **Native-Go function blocks** alongside ST (both lowering to the IR).
+3. **Extension 0.10.0** — first stable-channel Marketplace release, when the
    Test Explorer + schema work has soaked on the pre-release channel.

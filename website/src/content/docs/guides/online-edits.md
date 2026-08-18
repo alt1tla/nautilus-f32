@@ -60,3 +60,11 @@ And `nautilus pull` reconciles the whole resource: every controller program
 pulls back into the workspace file declaring its POU (a new program lands in
 `<POU>.st`/`.fbd`), so a field edit to any task is reviewable and
 committable — `--check` fails CI on drift in any of them.
+
+## Editing against history
+
+The controller also carries its own git provenance: every commit that
+touched the project, reviewable as diffs and warm-swappable as a whole —
+"run the logic from three commits ago" is one request, with the same gates,
+state migration, and rollback as any online edit. See
+[Program history](/guides/program-history/).

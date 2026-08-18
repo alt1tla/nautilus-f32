@@ -144,6 +144,22 @@ type Options struct {
 	// a standby's copy is as good as the leader's. Empty = 503 with a
 	// pointer at the missing configuration.
 	HistorianURL string
+
+	// History, when set, feeds GET /api/program/history: the project's
+	// captured git provenance (see ProgramHistory). It's a getter, not a
+	// value, so the runner can capture lazily — a built binary decodes its
+	// embedded snapshot on first request, `nautilus run` shells out to git
+	// then — without holding up the scan loop's start. Nil (or a getter
+	// returning nil) serves an empty history; the endpoint never 404s.
+	History func() *ProgramHistory
+
+	// SourcesAt resolves a commit sha from History to every task's composed
+	// program source (libraries joined ahead, exactly as boot composes
+	// them), keyed by task name — what POST /api/program/activate swaps in.
+	// The runner wires this through the project loader so composition rules
+	// live in one place; nil disables activation while leaving the history
+	// readable.
+	SourcesAt func(sha string) (map[string]string, error)
 }
 
 // DriverStatus is a field driver's or publisher's health, rendered by the
@@ -187,9 +203,12 @@ type Server struct {
 	drivers     func() []DriverStatus
 	cluster     interface{ Status() leader.Status }
 	historian   string
+	historyFn   func() *ProgramHistory
+	sourcesAt   func(sha string) (map[string]string, error)
 
 	mu      sync.Mutex
 	clients map[chan []byte]struct{}
+	active  string // last activated commit sha; see setActive
 }
 
 // New builds a Server over a runtime.
@@ -215,6 +234,8 @@ func New(rt *runtime.Runtime, opts ...Options) *Server {
 		s.drivers = opts[0].Drivers
 		s.cluster = opts[0].Cluster
 		s.historian = opts[0].HistorianURL
+		s.historyFn = opts[0].History
+		s.sourcesAt = opts[0].SourcesAt
 	}
 	return s
 }
@@ -281,6 +302,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/program", s.handleGetProgram)
 	mux.HandleFunc("PUT /api/program", s.handlePutProgram)
 	mux.HandleFunc("POST /api/program/rollback", s.handleRollback)
+	mux.HandleFunc("GET /api/program/history", s.handleProgramHistory)
+	mux.HandleFunc("POST /api/program/activate", s.handleActivate)
 	mux.HandleFunc("GET /api/cluster", s.handleCluster)
 	mux.HandleFunc("GET /api/history", s.handleHistory)
 	mux.HandleFunc("GET /api/history/", s.handleHistory)
