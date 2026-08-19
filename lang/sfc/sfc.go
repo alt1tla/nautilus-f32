@@ -62,12 +62,9 @@ func HasBlock(src string) bool {
 	return false
 }
 
-// Compile parses and structurally checks .sfc source, then lowers it to an
-// ir.Program via the ST front-end — the same shape as fbd.Compile. The
-// SFC→ST transpile hop (Transpile) is not implemented yet: Compile still
-// surfaces real parse and structural-check diagnostics (Parse, Check) so
-// callers get useful errors today, but always fails at the transpile step
-// until that lands.
+// Compile parses and structurally checks .sfc source, transpiles it to ST
+// (design doc §3), then lowers it to an ir.Program via the ST front-end —
+// the same shape as fbd.Compile.
 func Compile(src string) (*ir.Program, error) {
 	prog, err := Parse(src)
 	if err != nil {
@@ -89,18 +86,16 @@ func Compile(src string) (*ir.Program, error) {
 	return st.Lower(stProg)
 }
 
-// Transpile converts .sfc source to equivalent ST source (design doc §3).
-// Not implemented yet — the SFC→ST generation is a follow-on slice; the
-// signature is fixed now so runtime.lowerSource, `nautilus check`, and the
-// LSP can wire the seam without touching those call sites again once it
-// lands.
+// Transpile converts .sfc source to equivalent ST source (design doc §3):
+// one retained _S_<Step>_X BOOL per step, edge-driven transition firing,
+// and action qualifiers lowered per §3.2.
 func Transpile(src string) (string, error) {
 	stSrc, _, err := TranspileWithLines(src)
 	return stSrc, err
 }
 
 // TranspileWithLines is Transpile plus a line map (the lineMap[i] convention
-// of fbd.TranspileWithLines / ld.TranspileWithLines). Not implemented yet.
+// of fbd.TranspileWithLines / ld.TranspileWithLines).
 func TranspileWithLines(src string) (string, []int, error) {
 	if !HasBlock(src) {
 		return "", nil, fmt.Errorf("sfc: source has no SFC ... END_SFC body")

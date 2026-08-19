@@ -30,10 +30,11 @@ type Frame = {
   locals?: Record<string, unknown>;
 };
 
-/** Both IEC languages get live values — the identifier scanner is syntax-
- * agnostic and FBD netlists reference the same runtime tags. */
+/** All four IEC languages get live values — the identifier scanner is syntax-
+ * agnostic and every source form references the same runtime tags. */
 function isIecDoc(doc: vscode.TextDocument): boolean {
-  return doc.languageId === "iec-st" || doc.languageId === "iec-fbd" || doc.languageId === "iec-ld";
+  return doc.languageId === "iec-st" || doc.languageId === "iec-fbd" ||
+    doc.languageId === "iec-ld" || doc.languageId === "iec-sfc";
 }
 
 /** A frame is "fresh" if it arrived within this window; otherwise chips gray out. */

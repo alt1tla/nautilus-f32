@@ -1,6 +1,6 @@
 # Design: IEC 61131-3 Sequential Function Chart (SFC) support
 
-Status: proposed (design only — no code written for this document)
+Status: implemented (landed 2026-07-27 — language, runtime wiring, LSP, VS Code editor, example; §6's staging plan is historical)
 Author: design pass, 2026-07-23
 Scope: adds SFC as the fourth (and last) IEC 61131-3 language in nautilus, beside ST, FBD, and LD.
 

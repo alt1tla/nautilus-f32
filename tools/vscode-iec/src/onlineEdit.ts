@@ -36,17 +36,19 @@ function pouOf(src: string): string {
   return m ? m[1] : "";
 }
 
-/** Both IEC languages participate in online edits: a project's program file
- * may be .st or .fbd (the runtime accepts and serves either). */
+/** All four IEC languages participate in online edits: a project's program
+ * file may be .st, .fbd, .ld, or .sfc (the runtime accepts and serves any
+ * of them — internal/stproject includes all four). */
 function isIecLang(languageId: string): boolean {
-  return languageId === "iec-st" || languageId === "iec-fbd" || languageId === "iec-ld";
+  return languageId === "iec-st" || languageId === "iec-fbd" ||
+    languageId === "iec-ld" || languageId === "iec-sfc";
 }
 
 const REMOTE_SCHEME = "nautilus-controller";
 const LOCAL_SCHEME = "nautilus-workspace";
 const POLL_MS = 3000;
 
-const IEC_FILE = /\.(st|fbd|ld)$/i;
+const IEC_FILE = /\.(st|fbd|ld|sfc)$/i;
 
 /** The IEC document the user is "in": the active text editor, or — because
  * the graphical editors are custom editors that never appear in
