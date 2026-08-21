@@ -159,6 +159,7 @@ export class OnlineEdit implements vscode.Disposable {
         prelude: string;
         activeFile: string;
         programs: { file: string; uri: vscode.Uri; body: string; pou: string }[];
+        libraries: { file: string; uri: vscode.Uri }[];
       }
     | undefined
   > {
@@ -186,6 +187,7 @@ export class OnlineEdit implements vscode.Disposable {
 
     const isProgram = (src: string) => /^\s*PROGRAM\b/m.test(src);
     const programs: { file: string; uri: vscode.Uri; body: string; pou: string }[] = [];
+    const libraries: { file: string; uri: vscode.Uri }[] = [];
     // Only .st libraries join the prelude, matching internal/stproject.
     let prelude = "";
     for (const name of iecFiles) {
@@ -193,10 +195,11 @@ export class OnlineEdit implements vscode.Disposable {
       if (isProgram(src)) {
         programs.push({ file: name, uri: vscode.Uri.joinPath(dir, name), body: src, pou: pouOf(src) });
       } else if (/\.st$/i.test(name)) {
+        libraries.push({ file: name, uri: vscode.Uri.joinPath(dir, name) });
         prelude += src.endsWith("\n") ? src : src + "\n";
       }
     }
-    return { dir, prelude, activeFile: activeUri ? activeUri.path.split("/").pop() ?? "" : "", programs };
+    return { dir, prelude, activeFile: activeUri ? activeUri.path.split("/").pop() ?? "" : "", programs, libraries };
   }
 
   /**
@@ -322,18 +325,28 @@ export class OnlineEdit implements vscode.Disposable {
       void vscode.window.showErrorMessage(`nautilus: no controller at ${this.runtimeUrl()}`);
       return;
     }
-    // Name the virtual docs by the controller's language so the diff view
-    // gets the right syntax highlighting (.fbd programs diff as .fbd).
+    const title = `nautilus: controller (${info.hash}${info.dirty ? " · online edit" : ""}) ↔ workspace`;
+    if (ws && program) {
+      const body = splitProgram(info.source, ws.prelude);
+      if (body !== undefined) {
+        // The controller carries this project's libraries, so the whole
+        // difference lives in the program body — diff it against the real
+        // file, which stays editable like any working-tree diff.
+        const ext = /\.(fbd|ld|sfc)$/i.exec(program.file)?.[1].toLowerCase() ?? "st";
+        const remote = this.setDoc(REMOTE_SCHEME, `/controller.${ext}`, body);
+        await vscode.commands.executeCommand("vscode.diff", remote, program.uri, title);
+        return;
+      }
+    }
+    // Libraries diverge (or there's no workspace project): fall back to the
+    // full composed source, read-only on both sides. Name the virtual docs
+    // by the controller's language so the diff view gets the right syntax
+    // highlighting (.fbd programs diff as .fbd).
     const ext =
       info.language === "fbd" || info.language === "ld" || info.language === "sfc" ? info.language : "st";
     const remote = this.setDoc(REMOTE_SCHEME, `/controller.${ext}`, info.source);
     const local = this.setDoc(LOCAL_SCHEME, `/workspace.${ext}`, ws && program ? ws.prelude + program.body : "");
-    await vscode.commands.executeCommand(
-      "vscode.diff",
-      remote,
-      local,
-      `nautilus: controller (${info.hash}${info.dirty ? " · online edit" : ""}) ↔ workspace`
-    );
+    await vscode.commands.executeCommand("vscode.diff", remote, local, title);
   }
 
   /** Fetch the main program's info plus every other task's, walking the
@@ -354,7 +367,11 @@ export class OnlineEdit implements vscode.Disposable {
    * task choice is needed. An online edit swaps one task's whole source, so
    * copies can diverge — that divergence is the finding, surfaced as one
    * diff per distinct copy rather than hidden behind a "pick one" prompt. */
-  private async diffLibraries(ws: { prelude: string; programs: { pou: string; body: string }[] }): Promise<void> {
+  private async diffLibraries(ws: {
+    prelude: string;
+    programs: { pou: string; body: string }[];
+    libraries: { file: string; uri: vscode.Uri }[];
+  }): Promise<void> {
     const main = await this.fetchInfo();
     if (!main) {
       void vscode.window.showErrorMessage(`nautilus: no controller at ${this.runtimeUrl()}`);
@@ -381,7 +398,14 @@ export class OnlineEdit implements vscode.Disposable {
     for (const g of groups.values()) {
       const tasks = groups.size > 1 ? ` (${g.tasks.join(", ")})` : "";
       const remote = this.setDoc(REMOTE_SCHEME, `/controller-libraries-${n}.st`, g.prelude);
-      const local = this.setDoc(LOCAL_SCHEME, `/workspace-libraries-${n}.st`, ws.prelude);
+      // With a single library file the workspace side IS that file — use it
+      // directly so the diff stays editable, like any working-tree diff.
+      // Several library files compose into one prelude, so that side can
+      // only be shown read-only.
+      const local =
+        ws.libraries.length === 1
+          ? ws.libraries[0].uri
+          : this.setDoc(LOCAL_SCHEME, `/workspace-libraries-${n}.st`, ws.prelude);
       n++;
       await vscode.commands.executeCommand(
         "vscode.diff",

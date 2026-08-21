@@ -3,6 +3,18 @@
 All notable changes to the **nautilus IEC 61131-3** extension are documented
 here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.20] - 2026-08-21
+
+### Changed
+
+- **Controller diffs are editable on the workspace side** wherever that
+  side is one real file, like any working-tree diff. The program diff now
+  shows the controller's program body against the actual program file when
+  the libraries match (falling back to the read-only composed view when
+  they don't), and the library diff targets the actual `.st` file when the
+  project has exactly one library (several libraries compose into one
+  prelude, which stays read-only).
+
 ## [0.9.19] - 2026-08-21
 
 ### Fixed
