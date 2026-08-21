@@ -102,6 +102,42 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("nautilus.ld.diffController", () => ladder.diffController()),
     vscode.commands.registerCommand("nautilus.sfc.diff", () => sfc.diff()),
     vscode.commands.registerCommand("nautilus.sfc.diffController", () => sfc.diffController()),
+    // The connection is just the nautilus.runtimeUrl setting; this command
+    // is the discoverable way to change it. The config watcher below does
+    // the actual reconnect, so writing the setting IS connecting.
+    vscode.commands.registerCommand("nautilus.connect", async () => {
+      const cfg = vscode.workspace.getConfiguration("nautilus");
+      const current = cfg.get<string>("runtimeUrl", "http://localhost:8080");
+      const url = await vscode.window.showInputBox({
+        title: "nautilus: Connect to Controller",
+        prompt: "Base URL of the controller's tag API",
+        value: current,
+        validateInput: (v) => {
+          try {
+            new URL(v);
+            return undefined;
+          } catch {
+            return "Enter a full URL, e.g. http://plc-01:8080";
+          }
+        },
+      });
+      if (!url) return;
+      const target = vscode.workspace.workspaceFolders
+        ? vscode.ConfigurationTarget.Workspace
+        : vscode.ConfigurationTarget.Global;
+      await cfg.update("runtimeUrl", url, target);
+      // Probe once for immediate feedback; the live-values stream retries
+      // on its own either way, so a miss here is a warning, not a failure.
+      try {
+        const res = await fetch(url + "/api/state", { signal: AbortSignal.timeout(3000) });
+        if (!res.ok) throw new Error(res.statusText);
+        void vscode.window.showInformationMessage(`nautilus: connected — following ${url}`);
+      } catch {
+        void vscode.window.showWarningMessage(
+          `nautilus: no controller answering at ${url} yet — live values will keep retrying`
+        );
+      }
+    }),
     vscode.commands.registerCommand("nautilus.program.download", () => online.download()),
     vscode.commands.registerCommand("nautilus.program.diff", () => online.diff()),
     vscode.commands.registerCommand("nautilus.program.rollback", () => online.rollback()),

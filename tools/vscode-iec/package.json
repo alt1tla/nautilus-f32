@@ -149,6 +149,10 @@
         "title": "nautilus: Restart Language Server"
       },
       {
+        "command": "nautilus.connect",
+        "title": "nautilus: Connect to Controller…"
+      },
+      {
         "command": "nautilus.program.download",
         "title": "nautilus: Download Program to Controller"
       },
