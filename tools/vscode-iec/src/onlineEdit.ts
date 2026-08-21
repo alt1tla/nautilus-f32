@@ -13,9 +13,23 @@
 //
 // Program composition mirrors the runtime and the language server's project
 // rule (internal/stproject): sibling .st files with no PROGRAM are libraries
-// and precede the program file, sorted by name.
+// and precede the program file, sorted by name. The same libraries join
+// every program in a multi-program project, so a diff from a library file
+// needs no task choice — it compares the shared library text against every
+// task's copy (see diffLibraries).
 
 import * as vscode from "vscode";
+import { controllerPrelude, normalize, pouOf, splitProgram } from "./programSync";
+
+/** One entry in the GET /api/program directory — every program in the
+ * resource, source omitted. */
+export type ProgramSummary = {
+  task?: string;
+  pou?: string;
+  language?: string;
+  hash: string;
+  dirty: boolean;
+};
 
 export type ProgramInfo = {
   task?: string; // task name on the controller ("main", or a Task's name)
@@ -26,15 +40,9 @@ export type ProgramInfo = {
   dirty: boolean;
   editable: boolean;
   canRollback: boolean;
+  programs?: ProgramSummary[];
   error?: string;
 };
-
-/** The `PROGRAM <Name>` POU name of IEC source, "" if none. Programs on a
- * multi-task controller are addressed by this name. */
-function pouOf(src: string): string {
-  const m = /^\s*PROGRAM\s+([A-Za-z_][A-Za-z0-9_]*)/m.exec(src);
-  return m ? m[1] : "";
-}
 
 /** All four IEC languages participate in online edits: a project's program
  * file may be .st, .fbd, .ld, or .sfc (the runtime accepts and serves any
@@ -76,8 +84,9 @@ export type SyncState = "sync" | "edit" | "differs" | "offline";
 export class OnlineEdit implements vscode.Disposable {
   private status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 89);
   private timer: NodeJS.Timeout;
-  private remoteSource = "";
-  private localSource = "";
+  /** Virtual diff documents, keyed by scheme+path — a library diff can open
+   * one view per divergent task, so a single remote/local slot is not enough. */
+  private docs = new Map<string, string>();
   private disposables: vscode.Disposable[] = [];
 
   constructor(private readonly onState?: (state: SyncState, programUri?: vscode.Uri) => void) {
@@ -85,8 +94,7 @@ export class OnlineEdit implements vscode.Disposable {
     this.timer = setInterval(() => void this.refreshStatus(), POLL_MS);
 
     const provider: vscode.TextDocumentContentProvider = {
-      provideTextDocumentContent: (uri) =>
-        uri.scheme === REMOTE_SCHEME ? this.remoteSource : this.localSource,
+      provideTextDocumentContent: (uri) => this.docs.get(uri.scheme + uri.path) ?? "",
     };
     this.disposables.push(
       vscode.workspace.registerTextDocumentContentProvider(REMOTE_SCHEME, provider),
@@ -131,16 +139,28 @@ export class OnlineEdit implements vscode.Disposable {
     }
   }
 
+  /** Register a virtual document and return a URI for it — the query param
+   * defeats VS Code's content cache so each diff shows fresh content. */
+  private setDoc(scheme: string, path: string, content: string): vscode.Uri {
+    this.docs.set(scheme + path, content);
+    return vscode.Uri.parse(`${scheme}:${path}?${Date.now()}`);
+  }
+
   /**
-   * Compose the project source the way the runtime does (stproject.Join):
-   * library .st files (no PROGRAM) in the program file's directory, sorted by
-   * name and each ended with a newline, then the program file. Open editor
-   * buffers win over on-disk content. Returns the composed source, the
-   * prelude (composed minus program body — the split prefix), and the program
-   * file's URI + body.
+   * Decompose the project directory the way the runtime does
+   * (stproject.ComposeAll): .st files with no PROGRAM (sorted by name) are
+   * libraries shared by every program; each file with a PROGRAM — .st, .fbd,
+   * .ld, or .sfc — is one program. Open editor buffers win over on-disk
+   * content.
    */
-  private async compose(quiet = false): Promise<
-    { source: string; prelude: string; programFile: string; programUri: vscode.Uri; programBody: string } | undefined
+  private async composeAll(): Promise<
+    | {
+        dir: vscode.Uri;
+        prelude: string;
+        activeFile: string;
+        programs: { file: string; uri: vscode.Uri; body: string; pou: string }[];
+      }
+    | undefined
   > {
     const activeUri = activeIecUri();
     let dir: vscode.Uri | undefined;
@@ -153,7 +173,7 @@ export class OnlineEdit implements vscode.Disposable {
 
     const entries = await vscode.workspace.fs.readDirectory(dir);
     const iecFiles = entries
-      .filter(([name, kind]) => kind === vscode.FileType.File && /\.(st|fbd|ld)$/i.test(name))
+      .filter(([name, kind]) => kind === vscode.FileType.File && IEC_FILE.test(name))
       .map(([name]) => name)
       .sort();
 
@@ -165,38 +185,57 @@ export class OnlineEdit implements vscode.Disposable {
     }
 
     const isProgram = (src: string) => /^\s*PROGRAM\b/m.test(src);
-    const programs = iecFiles.filter((n) => isProgram(contents.get(n) ?? ""));
-    if (programs.length === 0) {
-      if (!quiet) void vscode.window.showErrorMessage("nautilus: no .st or .fbd file with a PROGRAM found in " + dir.fsPath);
-      return undefined;
-    }
-    let programFile = programs[0];
-    if (programs.length > 1) {
-      const activeName = activeUri ? activeUri.path.split("/").pop() ?? "" : "";
-      if (programs.includes(activeName)) programFile = activeName;
-      else {
-        if (!quiet)
-          void vscode.window.showErrorMessage(
-            `nautilus: multiple program files (${programs.join(", ")}) — open the one to download`
-          );
-        return undefined;
-      }
-    }
-
+    const programs: { file: string; uri: vscode.Uri; body: string; pou: string }[] = [];
     // Only .st libraries join the prelude, matching internal/stproject.
     let prelude = "";
     for (const name of iecFiles) {
-      const src = contents.get(name);
-      if (name === programFile || !src || isProgram(src) || !/\.st$/i.test(name)) continue;
-      prelude += src.endsWith("\n") ? src : src + "\n";
+      const src = contents.get(name) ?? "";
+      if (isProgram(src)) {
+        programs.push({ file: name, uri: vscode.Uri.joinPath(dir, name), body: src, pou: pouOf(src) });
+      } else if (/\.st$/i.test(name)) {
+        prelude += src.endsWith("\n") ? src : src + "\n";
+      }
     }
-    const programBody = contents.get(programFile) ?? "";
+    return { dir, prelude, activeFile: activeUri ? activeUri.path.split("/").pop() ?? "" : "", programs };
+  }
+
+  /**
+   * Compose the single program the active file names (or the only one) the
+   * way the runtime does (stproject.Join): shared libraries, then the
+   * program body. Download, pull, and rollback route to exactly one program,
+   * so an ambiguous target is an error here — diff and the status poll use
+   * composeAll and handle multi-program projects themselves.
+   */
+  private async compose(quiet = false, action = "download"): Promise<
+    | { source: string; prelude: string; programFile: string; programUri: vscode.Uri; programBody: string; pou: string }
+    | undefined
+  > {
+    const ws = await this.composeAll();
+    if (!ws) return undefined;
+    if (ws.programs.length === 0) {
+      if (!quiet)
+        void vscode.window.showErrorMessage("nautilus: no IEC file with a PROGRAM found in " + ws.dir.fsPath);
+      return undefined;
+    }
+    let program = ws.programs[0];
+    if (ws.programs.length > 1) {
+      const match = ws.programs.find((p) => p.file === ws.activeFile);
+      if (!match) {
+        if (!quiet)
+          void vscode.window.showErrorMessage(
+            `nautilus: multiple program files (${ws.programs.map((p) => p.file).join(", ")}) — open the one to ${action}`
+          );
+        return undefined;
+      }
+      program = match;
+    }
     return {
-      source: prelude + programBody,
-      prelude,
-      programFile,
-      programUri: vscode.Uri.joinPath(dir, programFile),
-      programBody,
+      source: ws.prelude + program.body,
+      prelude: ws.prelude,
+      programFile: program.file,
+      programUri: program.uri,
+      programBody: program.body,
+      pou: program.pou,
     };
   }
 
@@ -207,7 +246,7 @@ export class OnlineEdit implements vscode.Disposable {
     // Target the program the active file names — on a multi-task
     // controller the PUT routes by this POU, and the baseHash must come
     // from the same program or every task download would 409.
-    const info = await this.fetchInfo(pouOf(composed.programBody));
+    const info = await this.fetchInfo(composed.pou);
     if (!info) {
       void vscode.window.showErrorMessage(`nautilus: no controller at ${this.runtimeUrl()}`);
       return;
@@ -267,28 +306,90 @@ export class OnlineEdit implements vscode.Disposable {
     void this.refreshStatus();
   }
 
-  /** Side-by-side: what the controller runs vs the composed workspace. */
+  /** Side-by-side against the controller. From a program file (or a
+   * single-program project): that program's composed source vs what its
+   * task runs. From a library file in a multi-program project there is no
+   * single task to pick — the same libraries join every task's composition
+   * — so diff the shared library text against every task instead. */
   async diff(): Promise<void> {
-    const composed = await this.compose();
-    const info = await this.fetchInfo(composed ? pouOf(composed.programBody) : undefined);
+    const ws = await this.composeAll();
+    const program =
+      ws && (ws.programs.length === 1 ? ws.programs[0] : ws.programs.find((p) => p.file === ws.activeFile));
+    if (ws && !program) return this.diffLibraries(ws);
+
+    const info = await this.fetchInfo(program?.pou);
     if (!info) {
       void vscode.window.showErrorMessage(`nautilus: no controller at ${this.runtimeUrl()}`);
       return;
     }
-    this.remoteSource = info.source;
-    this.localSource = composed?.source ?? "";
     // Name the virtual docs by the controller's language so the diff view
     // gets the right syntax highlighting (.fbd programs diff as .fbd).
     const ext =
       info.language === "fbd" || info.language === "ld" || info.language === "sfc" ? info.language : "st";
-    const remote = vscode.Uri.parse(`${REMOTE_SCHEME}:/controller.${ext}?${Date.now()}`);
-    const local = vscode.Uri.parse(`${LOCAL_SCHEME}:/workspace.${ext}?${Date.now()}`);
+    const remote = this.setDoc(REMOTE_SCHEME, `/controller.${ext}`, info.source);
+    const local = this.setDoc(LOCAL_SCHEME, `/workspace.${ext}`, ws && program ? ws.prelude + program.body : "");
     await vscode.commands.executeCommand(
       "vscode.diff",
       remote,
       local,
       `nautilus: controller (${info.hash}${info.dirty ? " · online edit" : ""}) ↔ workspace`
     );
+  }
+
+  /** Fetch the main program's info plus every other task's, walking the
+   * directory the GET response carries. */
+  private async fetchAllPrograms(main: ProgramInfo): Promise<ProgramInfo[]> {
+    const infos: ProgramInfo[] = [main];
+    for (const s of main.programs ?? []) {
+      if (!s.pou || s.pou === main.pou) continue;
+      const info = await this.fetchInfo(s.pou);
+      // fetchInfo falls back to main on an unknown POU — skip such duplicates.
+      if (info && !infos.some((i) => i.pou === info.pou)) infos.push(info);
+    }
+    return infos;
+  }
+
+  /** Diff the shared library text against every task on the controller.
+   * Deployed, every task's composed source carries the same prelude, so no
+   * task choice is needed. An online edit swaps one task's whole source, so
+   * copies can diverge — that divergence is the finding, surfaced as one
+   * diff per distinct copy rather than hidden behind a "pick one" prompt. */
+  private async diffLibraries(ws: { prelude: string; programs: { pou: string; body: string }[] }): Promise<void> {
+    const main = await this.fetchInfo();
+    if (!main) {
+      void vscode.window.showErrorMessage(`nautilus: no controller at ${this.runtimeUrl()}`);
+      return;
+    }
+    const infos = await this.fetchAllPrograms(main);
+    const bodies = new Map(ws.programs.map((p) => [p.pou, p.body]));
+    // Group tasks by what their composed source says the libraries are.
+    const groups = new Map<string, { prelude: string; tasks: string[] }>();
+    for (const info of infos) {
+      const prelude = controllerPrelude(info.source, ws.prelude, bodies.get(info.pou ?? ""));
+      const key = normalize(prelude);
+      const g = groups.get(key) ?? { prelude, tasks: [] };
+      g.tasks.push(info.task ?? info.pou ?? "?");
+      groups.set(key, g);
+    }
+    if (groups.size > 1) {
+      void vscode.window.showWarningMessage(
+        "nautilus: controller tasks disagree about the shared libraries — an online edit changed one task's copy: " +
+          [...groups.values()].map((g) => g.tasks.join("+")).join(" vs ")
+      );
+    }
+    let n = 0;
+    for (const g of groups.values()) {
+      const tasks = groups.size > 1 ? ` (${g.tasks.join(", ")})` : "";
+      const remote = this.setDoc(REMOTE_SCHEME, `/controller-libraries-${n}.st`, g.prelude);
+      const local = this.setDoc(LOCAL_SCHEME, `/workspace-libraries-${n}.st`, ws.prelude);
+      n++;
+      await vscode.commands.executeCommand(
+        "vscode.diff",
+        remote,
+        local,
+        `nautilus: controller libraries${tasks} ↔ workspace`
+      );
+    }
   }
 
   /**
@@ -298,9 +399,9 @@ export class OnlineEdit implements vscode.Disposable {
    * never touched. Shows the change and asks before saving.
    */
   async pull(): Promise<void> {
-    const composed = await this.compose();
+    const composed = await this.compose(false, "pull");
     if (!composed) return;
-    const info = await this.fetchInfo(pouOf(composed.programBody));
+    const info = await this.fetchInfo(composed.pou);
     if (!info) {
       void vscode.window.showErrorMessage(`nautilus: no controller at ${this.runtimeUrl()}`);
       return;
@@ -320,11 +421,9 @@ export class OnlineEdit implements vscode.Disposable {
     }
 
     // Preview the incoming change before writing.
-    this.remoteSource = program;
-    this.localSource = composed.programBody;
-    const pullExt = /\.(fbd|ld)$/i.exec(composed.programFile)?.[1].toLowerCase() ?? "st";
-    const remote = vscode.Uri.parse(`${REMOTE_SCHEME}:/incoming.${pullExt}?${Date.now()}`);
-    const local = vscode.Uri.parse(`${LOCAL_SCHEME}:/current.${pullExt}?${Date.now()}`);
+    const pullExt = /\.(fbd|ld|sfc)$/i.exec(composed.programFile)?.[1].toLowerCase() ?? "st";
+    const remote = this.setDoc(REMOTE_SCHEME, `/incoming.${pullExt}`, program);
+    const local = this.setDoc(LOCAL_SCHEME, `/current.${pullExt}`, composed.programBody);
     await vscode.commands.executeCommand(
       "vscode.diff",
       local,
@@ -348,9 +447,18 @@ export class OnlineEdit implements vscode.Disposable {
   /** One-step stateful undo of the last download — of the program the
    * active file names, on a multi-task controller. */
   async rollback(): Promise<void> {
-    const composed = await this.compose();
-    const pou = composed ? pouOf(composed.programBody) : "";
-    const query = pou ? "?pou=" + encodeURIComponent(pou) : "";
+    const ws = await this.composeAll();
+    const program =
+      ws && (ws.programs.length === 1 ? ws.programs[0] : ws.programs.find((p) => p.file === ws.activeFile));
+    if (ws && ws.programs.length > 1 && !program) {
+      // Rolling back is per-task — falling through to main would undo the
+      // wrong program.
+      void vscode.window.showErrorMessage(
+        `nautilus: multiple program files (${ws.programs.map((p) => p.file).join(", ")}) — open the one to roll back`
+      );
+      return;
+    }
+    const query = program?.pou ? "?pou=" + encodeURIComponent(program.pou) : "";
     try {
       const res = await fetch(this.runtimeUrl() + "/api/program/rollback" + query, { method: "POST", headers: this.writeHeaders() });
       const body = (await res.json()) as { hash?: string; error?: string };
@@ -372,31 +480,50 @@ export class OnlineEdit implements vscode.Disposable {
       this.status.hide();
       return;
     }
-    const composed = await this.compose(true);
-    const info = await this.fetchInfo(composed ? pouOf(composed.programBody) : undefined);
+    const ws = await this.composeAll();
+    const program =
+      ws && (ws.programs.length === 1 ? ws.programs[0] : ws.programs.find((p) => p.file === ws.activeFile));
+    const info = await this.fetchInfo(program?.pou);
     if (!info) {
       this.status.hide();
-      this.onState?.("offline", composed?.programUri);
+      this.onState?.("offline", program?.uri);
       return;
     }
-    const inSync = composed ? normalize(composed.source) === normalize(info.source) : false;
-    if (inSync && !info.dirty) {
+    let inSync = false;
+    let dirty = info.dirty;
+    if (ws && program) {
+      inSync = normalize(ws.prelude + program.body) === normalize(info.source);
+    } else if (ws && ws.programs.length > 1) {
+      // A library file is active in a multi-program project: there is no
+      // single program to compare, so the workspace is in sync when every
+      // task runs its own composition — and every workspace program has a
+      // task running it.
+      const infos = await this.fetchAllPrograms(info);
+      const bodies = new Map(ws.programs.map((p) => [p.pou, p.body]));
+      inSync =
+        infos.every((i) => {
+          const body = bodies.get(i.pou ?? "");
+          return body !== undefined && normalize(ws.prelude + body) === normalize(i.source);
+        }) && ws.programs.every((p) => infos.some((i) => i.pou === p.pou));
+      dirty = infos.some((i) => i.dirty);
+    }
+    if (inSync && !dirty) {
       this.status.hide(); // running exactly what was deployed — nothing to say
-      this.onState?.("sync", composed?.programUri);
+      this.onState?.("sync", program?.uri);
       return;
     }
-    if (inSync && info.dirty) {
+    if (inSync && dirty) {
       this.status.text = "$(edit) nautilus: online edit active";
       this.status.tooltip =
         "The controller runs your latest download (matches the workspace) but not what it booted with.\n" +
         "Commit the file to keep it — a controller restart reverts. Click to diff.";
-      this.onState?.("edit", composed?.programUri);
+      this.onState?.("edit", program?.uri);
     } else {
       this.status.text = "$(cloud-upload) nautilus: program differs";
       this.status.tooltip =
         "The controller is running a different program than the workspace. Click to diff, " +
         "then Download Program to Controller to push.";
-      this.onState?.("differs", composed?.programUri);
+      this.onState?.("differs", program?.uri);
     }
     this.status.show();
   }
@@ -406,29 +533,4 @@ export class OnlineEdit implements vscode.Disposable {
     this.status.dispose();
     for (const d of this.disposables) d.dispose();
   }
-}
-
-/** Recover the program body from composed source given the prelude Join
- * placed ahead of it — the TypeScript mirror of stproject.SplitProgram.
- * Returns undefined when the prelude isn't a prefix (the controller's
- * libraries don't match this project). */
-function splitProgram(composed: string, prelude: string): string | undefined {
-  if (composed.startsWith(prelude)) return composed.slice(prelude.length);
-  const trimmed = prelude.replace(/\n+$/, "");
-  if (trimmed !== prelude && composed.startsWith(trimmed)) {
-    return composed.slice(trimmed.length).replace(/^\n/, "");
-  }
-  return undefined;
-}
-
-/** Whitespace-insensitive comparison: embed order and blank lines differ
- * between a binary's embed composition and the editor's, but the logic
- * doesn't. */
-function normalize(src: string): string {
-  return src
-    .replace(/\r/g, "")
-    .split("\n")
-    .map((l) => l.replace(/\s+$/g, ""))
-    .filter((l) => l.length > 0)
-    .join("\n");
 }

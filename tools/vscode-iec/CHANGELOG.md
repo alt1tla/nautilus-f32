@@ -3,6 +3,29 @@
 All notable changes to the **nautilus IEC 61131-3** extension are documented
 here. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.19] - 2026-08-21
+
+### Fixed
+
+- **Diffing from a library file no longer shows an empty workspace side.**
+  In a multi-program project, "Diff Program Against Controller" from a
+  library (e.g. `blocks.st`) used to error ("multiple program files") and
+  then diff the controller against an empty document — as if the workspace
+  program didn't exist. Libraries join every task's composition identically,
+  so the command now diffs the shared library text against every task on
+  the controller, no task choice needed. If tasks disagree about the
+  libraries (a field online-edit rewrote one task's copy), that divergence
+  is surfaced as a warning plus one diff per distinct copy.
+- **The status bar no longer claims "program differs" just because the
+  project has several program files.** With a library file active it now
+  checks every task's composition (and that every workspace program has a
+  task running it) before deciding sync/edit/differs.
+- `.sfc` files now participate in composition (program detection, download,
+  pull) like the other three languages — previously the fourth language was
+  missing from the project scan.
+- Rollback from a library file in a multi-program project now errors
+  instead of silently rolling back the main task.
+
 ## [0.9.18] - 2026-08-17
 
 ### Added
