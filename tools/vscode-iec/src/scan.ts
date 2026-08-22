@@ -246,6 +246,19 @@ export function formatValue(v: unknown): string {
   return String(v);
 }
 
+/** Parse a Set-Value input the way a pill reads: a number, or TRUE/FALSE
+ * (case-insensitive). Returns undefined for anything the write API would
+ * reject (POST /api/tags takes only a number or bool), so it doubles as the
+ * input-box validator. Empty is rejected. */
+export function parseWriteValue(raw: string): number | boolean | undefined {
+  const s = raw.trim();
+  if (s === "") return undefined;
+  if (/^true$/i.test(s)) return true;
+  if (/^false$/i.test(s)) return false;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 /** Hover rendering caps so a 173-member AOI doesn't flood the tooltip. */
 const HOVER_MAX_LINES = 40;
 const HOVER_MAX_ELEMS = 10;

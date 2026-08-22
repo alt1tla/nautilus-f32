@@ -3,7 +3,20 @@
 
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { scanIdentifiers, formatValue, formatValueHover } from "./scan";
+import { scanIdentifiers, formatValue, formatValueHover, parseWriteValue } from "./scan";
+
+test("parseWriteValue: numbers and booleans, rejects the rest", () => {
+  assert.equal(parseWriteValue("68"), 68);
+  assert.equal(parseWriteValue(" 63.5 "), 63.5);
+  assert.equal(parseWriteValue("-4"), -4);
+  assert.equal(parseWriteValue("1e3"), 1000);
+  assert.equal(parseWriteValue("TRUE"), true);
+  assert.equal(parseWriteValue("false"), false);
+  assert.equal(parseWriteValue(""), undefined);
+  assert.equal(parseWriteValue("sixty"), undefined);
+  assert.equal(parseWriteValue("68 68"), undefined);
+  assert.equal(parseWriteValue("NaN"), undefined);
+});
 
 const values = new Map<string, unknown>([
   ["levelpct", 59.887482],

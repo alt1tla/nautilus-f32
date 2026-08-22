@@ -168,6 +168,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         );
       }
     }),
+    vscode.commands.registerCommand("nautilus.setValue", (tag?: string) => live?.setValue(tag)),
     vscode.commands.registerCommand("nautilus.program.download", () => online.download()),
     vscode.commands.registerCommand("nautilus.program.diff", () => online.diff()),
     vscode.commands.registerCommand("nautilus.program.rollback", () => online.rollback()),

@@ -16,6 +16,7 @@ import {
   formatValue,
   formatValueHover,
   instanceScope,
+  parseWriteValue,
   scanFbRegions,
   scanIdentifiers,
   scanInstanceDecls,
@@ -129,6 +130,70 @@ export class LiveValues implements vscode.Disposable {
       .getConfiguration("nautilus")
       .get<string>("runtimeUrl", "http://localhost:8080")
       .replace(/\/+$/, "");
+  }
+
+  /** The last streamed value of a top-level tag, or undefined if none has
+   * arrived (no controller, or a name that isn't a tag). Keyed like the
+   * cache: case-insensitive, top-level names only. */
+  valueFor(name: string): unknown {
+    return this.values.get(name.toLowerCase());
+  }
+
+  /**
+   * Write a value to a tag over the API — the editor's counterpart to the
+   * dashboard's tag table (POST /api/tags). tag defaults to the identifier
+   * under the active cursor, so this serves both the right-click command and
+   * the "Set value…" link in a pill's hover. The value is parsed as the pill
+   * shows it: a bare number, or TRUE/FALSE. A written setpoint sticks; a
+   * state/output tag the scan owns is overwritten next cycle — that's honest
+   * PLC forcing, not a bug. The pill updates on the next frame.
+   */
+  async setValue(tag?: string): Promise<void> {
+    const name = tag ?? this.identifierAtCursor();
+    if (!name) {
+      void vscode.window.showWarningMessage("nautilus: put the cursor on a tag, then Set Live Value");
+      return;
+    }
+    const current = this.valueFor(name);
+    const prefill = current === undefined ? "" : formatValue(current);
+    const input = await vscode.window.showInputBox({
+      title: `nautilus: Set ${name}`,
+      prompt: current === undefined ? "New value (number, or TRUE/FALSE)" : `Current ${formatValue(current)} — new value (number, or TRUE/FALSE)`,
+      value: prefill,
+      validateInput: (v) => (parseWriteValue(v) === undefined ? "Enter a number, or TRUE/FALSE" : undefined),
+    });
+    if (input === undefined) return;
+    const value = parseWriteValue(input);
+    if (value === undefined) return;
+
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const token = vscode.workspace.getConfiguration("nautilus").get<string>("token", "");
+    if (token) headers["Authorization"] = "Bearer " + token;
+    try {
+      const res = await fetch(this.runtimeUrl() + "/api/tags", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ name, value }),
+      });
+      if (res.status === 204 || res.ok) {
+        void vscode.window.showInformationMessage(`nautilus: set ${name} = ${formatValue(value)}`);
+        return;
+      }
+      const body = await res.text();
+      void vscode.window.showErrorMessage(`nautilus: set ${name} rejected — ${body.trim() || res.statusText}`);
+    } catch (e) {
+      void vscode.window.showErrorMessage(`nautilus: could not reach ${this.runtimeUrl()} — ${String(e)}`);
+    }
+  }
+
+  /** The bare identifier under the active editor's cursor, or "". Only the
+   * top-level watch is offered a value write, so an FB member path (a name
+   * with a dot) resolves to "" here. */
+  private identifierAtCursor(): string {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || !isIecDoc(editor.document)) return "";
+    const range = editor.document.getWordRangeAtPosition(editor.selection.active, /[A-Za-z_][A-Za-z0-9_]*/);
+    return range ? editor.document.getText(range) : "";
   }
 
   private stEditors(): vscode.TextEditor[] {
@@ -322,6 +387,15 @@ export class LiveValues implements vscode.Disposable {
           const hover = new vscode.MarkdownString();
           hover.appendMarkdown(`**${seg.prefix}${site.path}** — live value from ${this.runtimeUrl()}\n`);
           hover.appendCodeblock(formatValueHover(site.value), "");
+          // "Set value…" — only for a bare top-level tag (no FB-instance
+          // prefix, no member/index path); a struct member isn't a writable
+          // name on its own. The command link needs a trusted hover.
+          if (seg.prefix === "" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(site.path)) {
+            const arg = encodeURIComponent(JSON.stringify([site.path]));
+            hover.appendMarkdown(`\n\n[$(edit) Set value…](command:nautilus.setValue?${arg})`);
+            hover.isTrusted = { enabledCommands: ["nautilus.setValue"] };
+            hover.supportThemeIcons = true;
+          }
           decos.push({
             range: new vscode.Range(pos, pos),
             renderOptions: {

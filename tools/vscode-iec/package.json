@@ -2,7 +2,7 @@
   "name": "vscode-iec",
   "displayName": "nautilus IEC 61131-3",
   "description": "IEC 61131-3 language support for the nautilus SCADA framework: Structured Text (.st), Function Block Diagram (.fbd), Ladder Diagram (.ld) and Sequential Function Chart (.sfc) with syntax highlighting, compile diagnostics, go-to-definition, live graphical diagram editors, inline live tag values from a running controller, and a graphical HMI mimic editor for *.mimic.json P&ID documents.",
-  "version": "0.9.22",
+  "version": "0.9.23",
   "publisher": "joyauto",
   "license": "Apache-2.0",
   "icon": "icon.png",
@@ -153,6 +153,10 @@
         "title": "nautilus: Connect to Controller…"
       },
       {
+        "command": "nautilus.setValue",
+        "title": "nautilus: Set Live Value…"
+      },
+      {
         "command": "nautilus.program.download",
         "title": "nautilus: Download Program to Controller"
       },
@@ -219,6 +223,13 @@
       }
     ],
     "menus": {
+      "editor/context": [
+        {
+          "command": "nautilus.setValue",
+          "when": "resourceLangId == iec-st || resourceLangId == iec-fbd || resourceLangId == iec-ld || resourceLangId == iec-sfc",
+          "group": "nautilus@1"
+        }
+      ],
       "editor/title": [
         {
           "command": "nautilus.fbd.preview",
