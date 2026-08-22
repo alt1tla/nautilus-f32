@@ -104,28 +104,58 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("nautilus.sfc.diffController", () => sfc.diffController()),
     // The connection is just the nautilus.runtimeUrl setting; this command
     // is the discoverable way to change it. The config watcher below does
-    // the actual reconnect, so writing the setting IS connecting.
+    // the actual reconnect, so writing the setting IS connecting. Recently
+    // used controllers are offered first — a plant floor is many of them —
+    // with free-text entry for a new URL.
     vscode.commands.registerCommand("nautilus.connect", async () => {
       const cfg = vscode.workspace.getConfiguration("nautilus");
       const current = cfg.get<string>("runtimeUrl", "http://localhost:8080");
-      const url = await vscode.window.showInputBox({
-        title: "nautilus: Connect to Controller",
-        prompt: "Base URL of the controller's tag API",
-        value: current,
-        validateInput: (v) => {
+      const recent = context.globalState.get<string[]>("nautilus.recentControllers", []);
+      const known = [current, ...recent.filter((u) => u !== current)];
+      const items = (typed: string): vscode.QuickPickItem[] => {
+        const list: vscode.QuickPickItem[] = known.map((u) => ({
+          label: u,
+          description: u === current ? "current" : "recent",
+        }));
+        // The typed value is always acceptable as-is; alwaysShow keeps it
+        // visible when it matches no recent entry.
+        if (typed && !known.includes(typed)) {
+          list.unshift({ label: typed, description: "connect", alwaysShow: true });
+        }
+        return list;
+      };
+      const qp = vscode.window.createQuickPick();
+      qp.title = "nautilus: Connect to Controller";
+      qp.placeholder = "Pick a recent controller or type a base URL, e.g. http://plc-01:8080";
+      qp.items = items("");
+      qp.onDidChangeValue((v) => (qp.items = items(v.trim())));
+      const url = await new Promise<string | undefined>((resolve) => {
+        qp.onDidAccept(() => {
+          const pick = qp.selectedItems[0]?.label ?? qp.value.trim();
           try {
-            new URL(v);
-            return undefined;
+            new URL(pick);
           } catch {
-            return "Enter a full URL, e.g. http://plc-01:8080";
+            qp.title = "Enter a full URL, e.g. http://plc-01:8080";
+            return; // stay open — the title is the validation message
           }
-        },
+          resolve(pick);
+          qp.hide();
+        });
+        qp.onDidHide(() => {
+          resolve(undefined); // no-op if already resolved by accept
+          qp.dispose();
+        });
+        qp.show();
       });
       if (!url) return;
       const target = vscode.workspace.workspaceFolders
         ? vscode.ConfigurationTarget.Workspace
         : vscode.ConfigurationTarget.Global;
       await cfg.update("runtimeUrl", url, target);
+      await context.globalState.update(
+        "nautilus.recentControllers",
+        [url, ...recent.filter((u) => u !== url)].slice(0, 8)
+      );
       // Probe once for immediate feedback; the live-values stream retries
       // on its own either way, so a miss here is a warning, not a failure.
       try {
