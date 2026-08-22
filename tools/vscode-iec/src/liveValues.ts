@@ -53,6 +53,14 @@ export type LiveFrameListener = (frame: {
 export class LiveValues implements vscode.Disposable {
   private enabled: boolean;
   private values = new Map<string, unknown>(); // lowercased tag name → value
+  // Last frame's tags and locals with their DECLARED casing, for the Live
+  // Values panel (the decoration path lowercases; a list wants real names).
+  private lastTags: [string, unknown][] = [];
+  private lastLocals: [string, unknown][] = [];
+  private readonly valuesChanged = new vscode.EventEmitter<void>();
+  /** Fires when the snapshot changes (a frame arrived, or the stream went
+   * stale/offline) — the Live Values view refreshes on this. */
+  readonly onDidChangeValues = this.valuesChanged.event;
   private listeners = new Set<LiveFrameListener>();
   // FUNCTION_BLOCK instance monitoring: which called instance an FB body's
   // pills read from (fb type, lowercased → instance name), plus the
@@ -148,7 +156,10 @@ export class LiveValues implements vscode.Disposable {
    * state/output tag the scan owns is overwritten next cycle — that's honest
    * PLC forcing, not a bug. The pill updates on the next frame.
    */
-  async setValue(tag?: string): Promise<void> {
+  async setValue(arg?: string | { tag?: string; name?: string }): Promise<void> {
+    // arg is a tag name (hover link), a Live Values tree item ({tag}), or
+    // undefined (palette / right-click → read the identifier under the cursor).
+    const tag = typeof arg === "string" ? arg : arg?.tag ?? arg?.name;
     const name = tag ?? this.identifierAtCursor();
     if (!name) {
       void vscode.window.showWarningMessage("nautilus: put the cursor on a tag, then Set Live Value");
@@ -306,10 +317,20 @@ export class LiveValues implements vscode.Disposable {
     for (const [name, value] of Object.entries(frame.tags ?? {})) {
       this.values.set(name.toLowerCase(), value);
     }
+    this.lastTags = Object.entries(frame.tags ?? {});
+    this.lastLocals = Object.entries(frame.locals ?? {});
     const wasStale = !this.fresh();
     this.lastFrameMs = Date.now();
     if (wasStale) this.updateStatus();
     this.scheduleRender();
+    this.valuesChanged.fire();
+  }
+
+  /** The current tags and locals with declared casing, for the Live Values
+   * panel. tags are settable (POST /api/tags by name); locals are the
+   * program's retained internals and are read-only here. */
+  snapshot(): { tags: [string, unknown][]; locals: [string, unknown][]; enabled: boolean; fresh: boolean } {
+    return { tags: this.lastTags, locals: this.lastLocals, enabled: this.enabled, fresh: this.fresh() };
   }
 
   private fresh(): boolean {
@@ -322,6 +343,7 @@ export class LiveValues implements vscode.Disposable {
     if (!this.fresh() && this.values.size > 0) {
       this.updateStatus();
       this.scheduleRender();
+      this.valuesChanged.fire(); // grey the panel too
     }
     // Watchdog: a socket that is open but silent (cable pulled, controller
     // wedged — no FIN ever arrives) would otherwise never be retried. Two

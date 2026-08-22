@@ -17,6 +17,7 @@ import {
   ServerOptions,
 } from "vscode-languageclient/node";
 import { FbMonitorLenses, LiveValues } from "./liveValues";
+import { LiveValuesView } from "./liveValuesView";
 import { OnlineEdit } from "./onlineEdit";
 import { broadcastSyncState, FbdEditorProvider, FbdPreview } from "./fbdPreview";
 import { LdEditorProvider, LdPreview } from "./ldPreview";
@@ -37,6 +38,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // "not found" and live values never connect).
   live = new LiveValues();
   context.subscriptions.push(live);
+
+  // The Live Values panel: a tree of tags/locals with a per-tag "Set value"
+  // pencil, for setting several values in a row from a list.
+  const liveValuesView = new LiveValuesView(live);
+  context.subscriptions.push(
+    liveValuesView,
+    vscode.window.registerTreeDataProvider("nautilusLiveValues", liveValuesView),
+    vscode.commands.registerCommand("nautilus.liveValues.refresh", () => liveValuesView.refresh())
+  );
 
   // Acceptance tests in the Test Explorer. Independent of the language
   // client too: it shells out to the CLI, and a project's tests should be

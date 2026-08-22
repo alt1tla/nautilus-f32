@@ -2,7 +2,7 @@
   "name": "vscode-iec",
   "displayName": "nautilus IEC 61131-3",
   "description": "IEC 61131-3 language support for the nautilus SCADA framework: Structured Text (.st), Function Block Diagram (.fbd), Ladder Diagram (.ld) and Sequential Function Chart (.sfc) with syntax highlighting, compile diagnostics, go-to-definition, live graphical diagram editors, inline live tag values from a running controller, and a graphical HMI mimic editor for *.mimic.json P&ID documents.",
-  "version": "0.9.23",
+  "version": "0.9.24",
   "publisher": "joyauto",
   "license": "Apache-2.0",
   "icon": "icon.png",
@@ -154,7 +154,13 @@
       },
       {
         "command": "nautilus.setValue",
-        "title": "nautilus: Set Live Value…"
+        "title": "nautilus: Set Live Value…",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "nautilus.liveValues.refresh",
+        "title": "nautilus: Refresh Live Values",
+        "icon": "$(refresh)"
       },
       {
         "command": "nautilus.program.download",
@@ -222,7 +228,50 @@
         "title": "Nautilus: Edit Component Ports\u2026"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "nautilus",
+          "title": "nautilus",
+          "icon": "icons/live-values.svg"
+        }
+      ]
+    },
+    "views": {
+      "nautilus": [
+        {
+          "id": "nautilusLiveValues",
+          "name": "Live Values",
+          "contextualTitle": "nautilus"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "nautilusLiveValues",
+        "contents": "No live values yet — start a controller with `nautilus run`, or point the editor at one.\n[Connect to Controller](command:nautilus.connect)\nValues stream over the same API the inline pills use."
+      }
+    ],
     "menus": {
+      "view/title": [
+        {
+          "command": "nautilus.connect",
+          "when": "view == nautilusLiveValues",
+          "group": "navigation@1"
+        },
+        {
+          "command": "nautilus.liveValues.refresh",
+          "when": "view == nautilusLiveValues",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "nautilus.setValue",
+          "when": "view == nautilusLiveValues && viewItem == nautilusTag",
+          "group": "inline"
+        }
+      ],
       "editor/context": [
         {
           "command": "nautilus.setValue",
@@ -248,6 +297,10 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "nautilus.liveValues.refresh",
+          "when": "false"
+        },
         {
           "command": "nautilus.fbd.preview",
           "when": "resourceLangId == iec-fbd"
