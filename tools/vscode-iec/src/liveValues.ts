@@ -193,8 +193,17 @@ export class LiveValues implements vscode.Disposable {
         }
       });
       res.on("end", () => this.scheduleReconnect());
+      // A controller that dies mid-stream cuts a chunked response short:
+      // Node reports that as 'aborted'/'close' (and an 'error' on the
+      // response), never 'end'. Without these the client sat on a dead
+      // socket forever — pills grey, no reconnect — until live values
+      // were toggled. scheduleReconnect is idempotent, so overlapping
+      // events are harmless.
+      res.on("error", () => this.scheduleReconnect());
+      res.on("close", () => this.scheduleReconnect());
     });
     req.on("error", () => this.scheduleReconnect());
+    req.on("close", () => this.scheduleReconnect());
     this.req = req;
   }
 
@@ -248,6 +257,15 @@ export class LiveValues implements vscode.Disposable {
     if (!this.fresh() && this.values.size > 0) {
       this.updateStatus();
       this.scheduleRender();
+    }
+    // Watchdog: a socket that is open but silent (cable pulled, controller
+    // wedged — no FIN ever arrives) would otherwise never be retried. Two
+    // freshness windows of silence with a request outstanding means the
+    // connection is dead whatever TCP thinks; tear it down and let the
+    // normal retry find the controller again.
+    if (this.req && this.lastFrameMs > 0 && Date.now() - this.lastFrameMs > 2 * FRESHNESS_MS) {
+      this.req.destroy();
+      this.scheduleReconnect();
     }
   }
 
