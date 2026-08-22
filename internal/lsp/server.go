@@ -85,6 +85,7 @@ func (s *Server) dispatch(m *message) {
 				HoverProvider:      true,
 				DefinitionProvider: true,
 				CompletionProvider: &CompletionOpts{TriggerCharacters: []string{"."}},
+				RenameProvider:     &RenameOpts{PrepareProvider: true},
 			},
 			ServerInfo: ServerInfo{Name: "nautilus-st-lsp", Version: Version},
 		})
@@ -121,6 +122,10 @@ func (s *Server) dispatch(m *message) {
 		s.handleHover(m)
 	case "textDocument/completion":
 		s.handleCompletion(m)
+	case "textDocument/prepareRename":
+		s.handlePrepareRename(m)
+	case "textDocument/rename":
+		s.handleRename(m)
 	default:
 		if m.ID != nil { // unknown request: must answer; unknown notification: ignore
 			s.w.respondError(m.ID, codeMethodNotFound, fmt.Sprintf("method %q not supported", m.Method))

@@ -139,8 +139,42 @@ type ServerCapabilities struct {
 	HoverProvider      bool            `json:"hoverProvider"`
 	DefinitionProvider bool            `json:"definitionProvider"`
 	CompletionProvider *CompletionOpts `json:"completionProvider,omitempty"`
+	RenameProvider     *RenameOpts     `json:"renameProvider,omitempty"`
 }
 
 type CompletionOpts struct {
 	TriggerCharacters []string `json:"triggerCharacters,omitempty"`
+}
+
+// RenameOpts advertises textDocument/rename; PrepareProvider adds
+// textDocument/prepareRename so the editor asks before opening the box.
+type RenameOpts struct {
+	PrepareProvider bool `json:"prepareProvider"`
+}
+
+// RenameParams is the textDocument/rename request.
+type RenameParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Position     Position               `json:"position"`
+	NewName      string                 `json:"newName"`
+}
+
+// PrepareRenameResult tells the editor what will be renamed and what to
+// prefill in the rename box.
+type PrepareRenameResult struct {
+	Range       Range  `json:"range"`
+	Placeholder string `json:"placeholder"`
+}
+
+// TextEdit replaces a range with new text.
+type TextEdit struct {
+	Range   Range  `json:"range"`
+	NewText string `json:"newText"`
+}
+
+// WorkspaceEdit is the rename result: edits grouped by document URI. A
+// tag rename spans every program that binds it plus the manifest, so the
+// editor shows them as one refactor and one undo.
+type WorkspaceEdit struct {
+	Changes map[string][]TextEdit `json:"changes"`
 }
