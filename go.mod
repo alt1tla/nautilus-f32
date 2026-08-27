@@ -5,7 +5,6 @@ go 1.24.0
 require (
 	github.com/charmbracelet/huh v1.0.0
 	github.com/eclipse/paho.mqtt.golang v1.5.1
-	github.com/joyautomation/nautilus v0.8.0
 	github.com/lib/pq v1.10.9
 	golang.org/x/term v0.35.0
 	google.golang.org/protobuf v1.36.11
