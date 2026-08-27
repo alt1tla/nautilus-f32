@@ -40,7 +40,7 @@ function sfcGraph(source: string): Promise<{ model?: unknown; error?: string }> 
         // fall through
       }
       if (err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-        return resolve({ error: `Couldn't run "${cli}". Install the nautilus CLI: go install github.com/joyautomation/nautilus/cmd/nautilus@latest` });
+        return resolve({ error: `Couldn't run "${cli}". Install the nautilus CLI: go install github.com/alt1tla/nautilus-f32/cmd/nautilus@latest` });
       }
       resolve({ error: err ? String(err) : "nautilus sfc graph: empty output" });
     });

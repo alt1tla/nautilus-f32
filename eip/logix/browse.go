@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/joyautomation/nautilus/eip/cip"
+	"github.com/alt1tla/nautilus-f32/eip/cip"
 )
 
 // instanceAttrs is the Symbol-class attribute set requested per instance

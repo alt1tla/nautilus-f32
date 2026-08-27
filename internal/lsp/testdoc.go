@@ -29,10 +29,10 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/joyautomation/nautilus/acceptance"
-	"github.com/joyautomation/nautilus/internal/project"
-	"github.com/joyautomation/nautilus/internal/stproject"
-	"github.com/joyautomation/nautilus/runtime"
+	"github.com/alt1tla/nautilus-f32/acceptance"
+	"github.com/alt1tla/nautilus-f32/internal/project"
+	"github.com/alt1tla/nautilus-f32/internal/stproject"
+	"github.com/alt1tla/nautilus-f32/runtime"
 )
 
 // isTestDoc reports whether a URI names an acceptance suite.

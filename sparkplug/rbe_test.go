@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joyautomation/nautilus/lang/ir"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
 )
 
 func TestRBEDeadbandAndHeartbeat(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joyautomation/nautilus/eip"
+	"github.com/alt1tla/nautilus-f32/eip"
 )
 
 func tagsFixture() eip.Manifest {

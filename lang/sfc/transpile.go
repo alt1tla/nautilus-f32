@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/joyautomation/nautilus/lang/st"
+	"github.com/alt1tla/nautilus-f32/lang/st"
 )
 
 // transpileProgram is the heart of Slice B: it turns a parsed SFC chart into
@@ -353,8 +353,8 @@ func (g *gen) levelBodyActions() []string {
 	return out
 }
 
-func (g *gen) isLevel(q string) bool  { return q == "N" || q == "S" || q == "R" }
-func (g *gen) isPulse(q string) bool  { return q == "P" || q == "P1" || q == "P0" }
+func (g *gen) isLevel(q string) bool { return q == "N" || q == "S" || q == "R" }
+func (g *gen) isPulse(q string) bool { return q == "P" || q == "P1" || q == "P0" }
 
 // riseEdge / fallEdge render a step's rising / falling edge signal.
 func (g *gen) riseEdge(name string) string {

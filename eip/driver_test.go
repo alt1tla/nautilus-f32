@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joyautomation/nautilus/eip/logixserver"
-	"github.com/joyautomation/nautilus/lang/ir"
-	"github.com/joyautomation/nautilus/runtime"
+	"github.com/alt1tla/nautilus-f32/eip/logixserver"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
+	"github.com/alt1tla/nautilus-f32/runtime"
 )
 
 func testSpec() *logixserver.TagSurfaceSpec {

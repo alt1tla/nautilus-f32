@@ -3,7 +3,7 @@ package logixserver
 import (
 	"encoding/binary"
 
-	"github.com/joyautomation/nautilus/eip/cip"
+	"github.com/alt1tla/nautilus-f32/eip/cip"
 )
 
 // TemplateObject implements CIP class 0x6C (Template), the Logix UDT-definition

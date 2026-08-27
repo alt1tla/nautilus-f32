@@ -200,7 +200,7 @@ func runNew(args []string) int {
 `, sc.Name, what, sc.Name, sc.Name, sc.Language)
 		return 0
 	}
-	dep := "pulls github.com/joyautomation/nautilus"
+	dep := "pulls github.com/alt1tla/nautilus-f32"
 	if sc.Replace != "" {
 		dep = "resolves against " + sc.Replace
 	}

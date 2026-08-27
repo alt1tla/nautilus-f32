@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joyautomation/nautilus/lang/st"
+	"github.com/alt1tla/nautilus-f32/lang/st"
 )
 
 func TestRenderOrdersDependenciesAndCompiles(t *testing.T) {

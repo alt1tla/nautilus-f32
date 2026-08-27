@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joyautomation/nautilus/internal/project"
-	"github.com/joyautomation/nautilus/runtime"
+	"github.com/alt1tla/nautilus-f32/internal/project"
+	"github.com/alt1tla/nautilus-f32/runtime"
 )
 
 // gitRepo builds a throwaway repo with the project in a subdirectory —

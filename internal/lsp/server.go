@@ -10,7 +10,7 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"github.com/joyautomation/nautilus/internal/stproject"
+	"github.com/alt1tla/nautilus-f32/internal/stproject"
 )
 
 // Version is stamped into serverInfo so `nautilus lsp` and the extension

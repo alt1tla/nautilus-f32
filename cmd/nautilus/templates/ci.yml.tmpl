@@ -13,7 +13,7 @@ jobs:
           go-version: "1.24"
 {{- if .NoGo}}
       - name: install nautilus
-        run: go install github.com/joyautomation/nautilus/cmd/nautilus@latest
+        run: go install github.com/alt1tla/nautilus-f32/cmd/nautilus@latest
       - name: check control logic
         run: nautilus check .
       - name: acceptance tests
@@ -24,7 +24,7 @@ jobs:
       - name: vet
         run: go vet ./...
       - name: check control logic
-        run: go run github.com/joyautomation/nautilus/cmd/nautilus check .
+        run: go run github.com/alt1tla/nautilus-f32/cmd/nautilus check .
       - name: test
         run: go test ./...
       - name: build

@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/joyautomation/nautilus/lang/ld"
+	"github.com/alt1tla/nautilus-f32/lang/ld"
 )
 
 const ldUsage = `nautilus ld — Ladder Diagram tools

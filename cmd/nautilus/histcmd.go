@@ -23,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joyautomation/nautilus/hist"
+	"github.com/alt1tla/nautilus-f32/hist"
 )
 
 const historianUsage = `nautilus historian — archive a controller's tags into Postgres

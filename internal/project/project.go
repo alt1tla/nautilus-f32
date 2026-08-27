@@ -21,11 +21,11 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/joyautomation/nautilus/eip"
-	nio "github.com/joyautomation/nautilus/io"
-	"github.com/joyautomation/nautilus/runtime"
-	"github.com/joyautomation/nautilus/server"
-	"github.com/joyautomation/nautilus/sparkplug"
+	"github.com/alt1tla/nautilus-f32/eip"
+	nio "github.com/alt1tla/nautilus-f32/io"
+	"github.com/alt1tla/nautilus-f32/runtime"
+	"github.com/alt1tla/nautilus-f32/server"
+	"github.com/alt1tla/nautilus-f32/sparkplug"
 )
 
 // ManifestName is the file that marks a directory as a manifest project.

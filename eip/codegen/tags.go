@@ -15,8 +15,8 @@ import (
 	"path"
 	"strings"
 
-	"github.com/joyautomation/nautilus/eip"
-	"github.com/joyautomation/nautilus/internal/tagfile"
+	"github.com/alt1tla/nautilus-f32/eip"
+	"github.com/alt1tla/nautilus-f32/internal/tagfile"
 )
 
 // elementary is every Logix scalar name the driver decodes directly. A

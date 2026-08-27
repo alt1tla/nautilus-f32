@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	nio "github.com/joyautomation/nautilus/io"
-	"github.com/joyautomation/nautilus/lang/ir"
+	nio "github.com/alt1tla/nautilus-f32/io"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
 )
 
 // Declarative tag definitions: one place per tag for its ROLE in the scan

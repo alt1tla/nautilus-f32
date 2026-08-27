@@ -1,8 +1,8 @@
 package sparkplug
 
 import (
-	"github.com/joyautomation/nautilus/lang/ir"
-	"github.com/joyautomation/nautilus/sparkplug/spb"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
+	"github.com/alt1tla/nautilus-f32/sparkplug/spb"
 )
 
 // UDT struct tags publish as Sparkplug Template instances (TemplateRef → type

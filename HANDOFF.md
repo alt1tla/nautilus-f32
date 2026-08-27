@@ -20,7 +20,7 @@ nautilus; copy/adapt from it.
 ## Repo / status
 
 - GitHub: `joyautomation/nautilus` (private). `main` is the release branch.
-- Go module `github.com/joyautomation/nautilus`; core is pure stdlib.
+- Go module `github.com/alt1tla/nautilus-f32`; core is pure stdlib.
 - **CI only runs on pushes to main and on PRs.** A long-lived branch with no
   PR gets zero CI — open the PR early. (This bit the acceptance-testing
   branch: 23 commits accumulated with a red test suite nobody saw.)

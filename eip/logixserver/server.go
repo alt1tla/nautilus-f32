@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/joyautomation/nautilus/eip/cip"
+	"github.com/alt1tla/nautilus-f32/eip/cip"
 )
 
 // fragLimit is the largest value payload returned in a single Read Tag reply.

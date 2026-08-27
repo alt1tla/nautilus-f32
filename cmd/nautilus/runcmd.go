@@ -24,13 +24,13 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/joyautomation/nautilus/acceptance"
-	"github.com/joyautomation/nautilus/internal/project"
-	"github.com/joyautomation/nautilus/internal/vcs"
-	"github.com/joyautomation/nautilus/leader"
-	"github.com/joyautomation/nautilus/retain"
-	"github.com/joyautomation/nautilus/runtime"
-	"github.com/joyautomation/nautilus/server"
+	"github.com/alt1tla/nautilus-f32/acceptance"
+	"github.com/alt1tla/nautilus-f32/internal/project"
+	"github.com/alt1tla/nautilus-f32/internal/vcs"
+	"github.com/alt1tla/nautilus-f32/leader"
+	"github.com/alt1tla/nautilus-f32/retain"
+	"github.com/alt1tla/nautilus-f32/runtime"
+	"github.com/alt1tla/nautilus-f32/server"
 )
 
 // runProject hosts a loaded project: scan loop + tag API, Ctrl+C to stop.

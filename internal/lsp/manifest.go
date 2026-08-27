@@ -21,7 +21,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/joyautomation/nautilus/internal/project"
+	"github.com/alt1tla/nautilus-f32/internal/project"
 )
 
 // ProjectTag is one tag as nautilus.yaml declares it.

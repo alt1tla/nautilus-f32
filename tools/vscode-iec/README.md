@@ -3,7 +3,7 @@
 VS Code language support for **IEC 61131-3 Structured Text** (`.st`),
 **Function Block Diagram** (`.fbd`), **Ladder Diagram** (`.ld`) and
 **Sequential Function Chart** (`.sfc`) as used by the
-[nautilus](https://github.com/joyautomation/nautilus) Go + SvelteKit SCADA
+[nautilus](https://github.com/alt1tla/nautilus-f32) Go + SvelteKit SCADA
 framework: develop SCADA in VS Code like a real software developer.
 
 ![Live tag values rendered as pills next to identifiers in a .st file, with the nautilus file tree alongside](https://raw.githubusercontent.com/joyautomation/nautilus/main/tools/vscode-iec/images/live-values.png)
@@ -35,7 +35,7 @@ subcommand, which runs the *real* `lang/st` compiler over stdio:
 Install the CLI once:
 
 ```sh
-go install github.com/joyautomation/nautilus/cmd/nautilus@latest
+go install github.com/alt1tla/nautilus-f32/cmd/nautilus@latest
 ```
 
 `nautilus.cliPath` points elsewhere if it's not on PATH.
@@ -209,7 +209,7 @@ toggles the feature. Set `nautilus.runtimeUrl` (default
 - **Syntax highlighting** works with no setup.
 - **Language features** (diagnostics, go-to-definition, hover, completion)
   need the nautilus CLI on your PATH — `go install
-  github.com/joyautomation/nautilus/cmd/nautilus@latest`. Point
+  github.com/alt1tla/nautilus-f32/cmd/nautilus@latest`. Point
   `nautilus.cliPath` at it if it's installed elsewhere.
 - **Inline live values** need a running nautilus controller exposing the tag
   API; set `nautilus.runtimeUrl` (default `http://localhost:8080`).
@@ -235,6 +235,6 @@ that folder's README.
 
 ## Source & license
 
-Part of the [nautilus](https://github.com/joyautomation/nautilus) monorepo
+Part of the [nautilus](https://github.com/alt1tla/nautilus-f32) monorepo
 (`tools/vscode-iec`). Issues and contributions welcome there. Licensed under
 the Apache License 2.0.

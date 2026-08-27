@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/joyautomation/nautilus/lang/ir"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
 )
 
 // Model is the FBD render model consumed by diagram tooling (the VS Code

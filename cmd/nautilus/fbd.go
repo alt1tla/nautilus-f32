@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/joyautomation/nautilus/lang/fbd"
+	"github.com/alt1tla/nautilus-f32/lang/fbd"
 )
 
 const fbdUsage = `nautilus fbd — Function Block Diagram tools

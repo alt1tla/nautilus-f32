@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joyautomation/nautilus/internal/k8sapi"
+	"github.com/alt1tla/nautilus-f32/internal/k8sapi"
 )
 
 // fakeAPI is a minimal in-memory stand-in for the coordination.k8s.io Lease

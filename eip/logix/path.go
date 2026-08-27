@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/joyautomation/nautilus/eip/cip"
+	"github.com/alt1tla/nautilus-f32/eip/cip"
 )
 
 // EncodeTagPath builds the EPATH for a symbolic tag reference like

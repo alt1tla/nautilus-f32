@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joyautomation/nautilus/eip"
-	"github.com/joyautomation/nautilus/eip/codegen"
-	"github.com/joyautomation/nautilus/eip/logix"
+	"github.com/alt1tla/nautilus-f32/eip"
+	"github.com/alt1tla/nautilus-f32/eip/codegen"
+	"github.com/alt1tla/nautilus-f32/eip/logix"
 	"gopkg.in/yaml.v3"
 )
 

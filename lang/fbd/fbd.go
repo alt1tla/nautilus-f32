@@ -26,8 +26,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/joyautomation/nautilus/lang/ir"
-	"github.com/joyautomation/nautilus/lang/st"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
+	"github.com/alt1tla/nautilus-f32/lang/st"
 )
 
 // Compile parses .fbd source and lowers it to an ir.Program, reusing the ST

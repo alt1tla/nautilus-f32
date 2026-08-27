@@ -16,7 +16,7 @@ builds:
     ldflags:
       # -s -w strips debug info; -X injects the tag version into the CLI so
       # `nautilus version` matches the release.
-      - -s -w -X github.com/joyautomation/nautilus/internal/lsp.Version={{ .Version }}
+      - -s -w -X github.com/alt1tla/nautilus-f32/internal/lsp.Version={{ .Version }}
 
 archives:
   - id: nautilus

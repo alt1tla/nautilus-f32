@@ -10,8 +10,8 @@ package eip
 import (
 	"fmt"
 
-	"github.com/joyautomation/nautilus/eip/logix"
-	"github.com/joyautomation/nautilus/lang/ir"
+	"github.com/alt1tla/nautilus-f32/eip/logix"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
 )
 
 // Manifest is the committed description of what a project consumes from one

@@ -23,7 +23,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/joyautomation/nautilus/lang/st"
+	"github.com/alt1tla/nautilus-f32/lang/st"
 )
 
 // Type is an ST type expression: an elementary type, an array, or a

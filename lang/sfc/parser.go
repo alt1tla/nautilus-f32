@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/joyautomation/nautilus/lang/st"
+	"github.com/alt1tla/nautilus-f32/lang/st"
 )
 
 // Parse parses a full .sfc source file into an AST: the ST-standard header

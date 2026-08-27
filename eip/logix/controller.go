@@ -8,7 +8,7 @@ import (
 	"math/rand"
 	"sync"
 
-	"github.com/joyautomation/nautilus/eip/cip"
+	"github.com/alt1tla/nautilus-f32/eip/cip"
 )
 
 // connectionBytes is the Class 3 connection size we negotiate — the standard

@@ -3,8 +3,8 @@ package sparkplug
 import (
 	"testing"
 
-	"github.com/joyautomation/nautilus/lang/ir"
-	"github.com/joyautomation/nautilus/sparkplug/spb"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
+	"github.com/alt1tla/nautilus-f32/sparkplug/spb"
 )
 
 func TestPayloadRoundTrip(t *testing.T) {

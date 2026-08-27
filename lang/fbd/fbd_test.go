@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joyautomation/nautilus/lang/ir"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
 )
 
 // run compiles FBD source and executes one scan against a tag host, returning

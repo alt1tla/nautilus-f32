@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/joyautomation/nautilus/internal/k8sapi"
+	"github.com/alt1tla/nautilus-f32/internal/k8sapi"
 )
 
 // configMapStore retains State in a Kubernetes ConfigMap, via a *k8sapi.Client

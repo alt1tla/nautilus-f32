@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/joyautomation/nautilus/eip"
-	"github.com/joyautomation/nautilus/server"
-	"github.com/joyautomation/nautilus/sparkplug"
+	"github.com/alt1tla/nautilus-f32/eip"
+	"github.com/alt1tla/nautilus-f32/server"
+	"github.com/alt1tla/nautilus-f32/sparkplug"
 )
 
 // DriverStatus adapts the field driver's and Sparkplug node's health into the

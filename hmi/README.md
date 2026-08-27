@@ -1,6 +1,6 @@
 # @joyautomation/nautilus-hmi
 
-The **HMI / digital-twin layer of [nautilus](https://github.com/joyautomation/nautilus)** — a
+The **HMI / digital-twin layer of [nautilus](https://github.com/alt1tla/nautilus-f32)** — a
 reusable Svelte 5 component library for building operator screens on top of any nautilus runtime.
 
 It ships three things:

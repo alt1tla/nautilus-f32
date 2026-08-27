@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/joyautomation/nautilus/lang/st"
+	"github.com/alt1tla/nautilus-f32/lang/st"
 )
 
 // netlist is a parsed FBD body: wire definitions, FB instance declarations,

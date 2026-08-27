@@ -3,8 +3,8 @@ package runtime_test
 import (
 	"testing"
 
-	nio "github.com/joyautomation/nautilus/io"
-	"github.com/joyautomation/nautilus/runtime"
+	nio "github.com/alt1tla/nautilus-f32/io"
+	"github.com/alt1tla/nautilus-f32/runtime"
 )
 
 // The heated-tank program: hysteresis latch + PI loop with LIMIT calls —

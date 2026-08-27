@@ -5,7 +5,7 @@
 // standalone it's a JSON file next to the project.
 package retain
 
-import "github.com/joyautomation/nautilus/internal/k8sapi"
+import "github.com/alt1tla/nautilus-f32/internal/k8sapi"
 
 // State is everything a controller retains across power cycles.
 type State struct {

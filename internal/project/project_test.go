@@ -6,8 +6,8 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/joyautomation/nautilus/eip"
-	"github.com/joyautomation/nautilus/runtime"
+	"github.com/alt1tla/nautilus-f32/eip"
+	"github.com/alt1tla/nautilus-f32/runtime"
 )
 
 func eipHealthLike(connected bool, lastErr string, polls, pollErrors uint64) eip.Health {

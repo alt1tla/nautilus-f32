@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joyautomation/nautilus/leader"
+	"github.com/alt1tla/nautilus-f32/leader"
 )
 
 // fakeCluster is a minimal stand-in for *leader.Elector — anything with a

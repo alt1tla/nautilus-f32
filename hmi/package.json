@@ -5,7 +5,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/joyautomation/nautilus.git",
+    "url": "git+https://github.com/alt1tla/nautilus-f32.git",
     "directory": "hmi"
   },
   "type": "module",

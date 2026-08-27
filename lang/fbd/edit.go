@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/joyautomation/nautilus/lang/st"
+	"github.com/alt1tla/nautilus-f32/lang/st"
 )
 
 // Structural edit operations for diagram tooling. A gesture in the FBD

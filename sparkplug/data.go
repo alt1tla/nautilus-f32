@@ -3,7 +3,7 @@ package sparkplug
 import (
 	"time"
 
-	"github.com/joyautomation/nautilus/lang/ir"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
 )
 
 // scanAndPublish samples the tag store once, applies each metric's RBE rule,

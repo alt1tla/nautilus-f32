@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	nio "github.com/joyautomation/nautilus/io"
+	nio "github.com/alt1tla/nautilus-f32/io"
 )
 
 // Plant is a first-order batch-tank simulation, the same shape as

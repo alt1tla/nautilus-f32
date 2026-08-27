@@ -27,12 +27,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/joyautomation/nautilus.git",
+    "url": "git+https://github.com/alt1tla/nautilus-f32.git",
     "directory": "tools/vscode-iec"
   },
-  "homepage": "https://github.com/joyautomation/nautilus/tree/main/tools/vscode-iec#readme",
+  "homepage": "https://github.com/alt1tla/nautilus-f32/tree/main/tools/vscode-iec#readme",
   "bugs": {
-    "url": "https://github.com/joyautomation/nautilus/issues"
+    "url": "https://github.com/alt1tla/nautilus-f32/issues"
   },
   "main": "./out/extension.js",
   "activationEvents": [
@@ -345,7 +345,7 @@
         "nautilus.cliPath": {
           "type": "string",
           "default": "nautilus",
-          "description": "Path to the nautilus CLI binary (provides the language server via `nautilus lsp`). Install with: go install github.com/joyautomation/nautilus/cmd/nautilus@latest"
+          "description": "Path to the nautilus CLI binary (provides the language server via `nautilus lsp`). Install with: go install github.com/alt1tla/nautilus-f32/cmd/nautilus@latest"
         },
         "nautilus.runtimeUrl": {
           "type": "string",

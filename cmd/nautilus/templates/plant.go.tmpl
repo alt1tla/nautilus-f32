@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	nio "github.com/joyautomation/nautilus/io"
+	nio "github.com/alt1tla/nautilus-f32/io"
 )
 
 // Plant is an in-process simulation of the heated surge tank, implemented as a

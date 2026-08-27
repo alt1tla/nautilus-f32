@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	nio "github.com/joyautomation/nautilus/io"
-	"github.com/joyautomation/nautilus/runtime"
+	nio "github.com/alt1tla/nautilus-f32/io"
+	"github.com/alt1tla/nautilus-f32/runtime"
 )
 
 const prog = `PROGRAM Main
@@ -257,7 +257,7 @@ END_PROGRAM`,
 		// y is seeded: Aux reads it and may win the startup race against
 		// Main's first scan, which is what creates it — the tag model's
 		// read-before-first-write case, whose documented fix is a seed.
-		Tags:   []runtime.TagDef{runtime.Input("x"), runtime.Output("y", runtime.Init(0.0)), runtime.State("z", 0.0)},
+		Tags: []runtime.TagDef{runtime.Input("x"), runtime.Output("y", runtime.Init(0.0)), runtime.State("z", 0.0)},
 		Tasks: []runtime.Task{{
 			Name: "aux",
 			Scan: 3 * time.Millisecond,

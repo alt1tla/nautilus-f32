@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/joyautomation/nautilus/eip/cip"
+	"github.com/alt1tla/nautilus-f32/eip/cip"
 )
 
 // tagEntry is the stored state for one canonical tag path.

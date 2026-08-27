@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	nio "github.com/joyautomation/nautilus/io"
-	"github.com/joyautomation/nautilus/runtime"
-	"github.com/joyautomation/nautilus/sparkplug"
+	nio "github.com/alt1tla/nautilus-f32/io"
+	"github.com/alt1tla/nautilus-f32/runtime"
+	"github.com/alt1tla/nautilus-f32/sparkplug"
 )
 
 // tckVersion is the sparkplug-tck-go release the conformance test runs

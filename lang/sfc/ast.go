@@ -1,6 +1,6 @@
 package sfc
 
-import "github.com/joyautomation/nautilus/lang/st"
+import "github.com/alt1tla/nautilus-f32/lang/st"
 
 // Pos is a 1-based source location, field-compatible with st.Pos so values
 // move between the two packages without conversion boilerplate (see
@@ -61,11 +61,11 @@ func (a Assoc) NodePos() Pos { return a.Pos }
 // END_TRANSITION`. Cond is captured as a verbatim text Span — an arbitrary
 // ST boolean expression — not parsed here (see Span).
 type Transition struct {
-	Name string // "" if the transition is unnamed
-	From []string
-	To   []string
-	Cond Span
-	Pos  Pos // the TRANSITION keyword
+	Name   string // "" if the transition is unnamed
+	From   []string
+	To     []string
+	Cond   Span
+	Pos    Pos // the TRANSITION keyword
 	EndPos Pos // the matching END_TRANSITION
 }
 

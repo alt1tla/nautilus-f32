@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/joyautomation/nautilus/eip/logix"
-	nio "github.com/joyautomation/nautilus/io"
-	"github.com/joyautomation/nautilus/lang/ir"
+	"github.com/alt1tla/nautilus-f32/eip/logix"
+	nio "github.com/alt1tla/nautilus-f32/io"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
 )
 
 // Driver polls a Logix controller and implements io.Driver. It owns a

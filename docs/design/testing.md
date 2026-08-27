@@ -221,7 +221,7 @@ the harness already visits every tick.
 
 ### 4.7 The Go tier converges on the same harness
 
-The harness ships as an exported package, `github.com/joyautomation/nautilus/acceptance`:
+The harness ships as an exported package, `github.com/alt1tla/nautilus-f32/acceptance`:
 
 ```go
 func TestAcceptance(t *testing.T) { acceptance.Run(t, ".") }              // manifest project

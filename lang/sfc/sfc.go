@@ -41,8 +41,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/joyautomation/nautilus/lang/ir"
-	"github.com/joyautomation/nautilus/lang/st"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
+	"github.com/alt1tla/nautilus-f32/lang/st"
 )
 
 var (

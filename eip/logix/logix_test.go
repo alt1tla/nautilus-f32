@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joyautomation/nautilus/eip/cip"
-	"github.com/joyautomation/nautilus/eip/logixserver"
+	"github.com/alt1tla/nautilus-f32/eip/cip"
+	"github.com/alt1tla/nautilus-f32/eip/logixserver"
 )
 
 // startEmulator brings up the in-repo Logix emulator on a free loopback port

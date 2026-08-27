@@ -14,9 +14,9 @@ import (
 	"os/signal"
 	"time"
 
-	nio "github.com/joyautomation/nautilus/io"
-	"github.com/joyautomation/nautilus/runtime"
-	"github.com/joyautomation/nautilus/server"
+	nio "github.com/alt1tla/nautilus-f32/io"
+	"github.com/alt1tla/nautilus-f32/runtime"
+	"github.com/alt1tla/nautilus-f32/server"
 )
 
 //go:embed program.st

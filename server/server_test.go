@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	nio "github.com/joyautomation/nautilus/io"
-	"github.com/joyautomation/nautilus/runtime"
+	nio "github.com/alt1tla/nautilus-f32/io"
+	"github.com/alt1tla/nautilus-f32/runtime"
 )
 
 const testProgram = `PROGRAM Test

@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/joyautomation/nautilus/lang/ir"
-	"github.com/joyautomation/nautilus/retain"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
+	"github.com/alt1tla/nautilus-f32/retain"
 )
 
 // Coordinator decides whether this replica owns the scan loop. leader.Elector

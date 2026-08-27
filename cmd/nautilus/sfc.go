@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/joyautomation/nautilus/lang/sfc"
+	"github.com/alt1tla/nautilus-f32/lang/sfc"
 )
 
 const sfcUsage = `nautilus sfc — Sequential Function Chart tools

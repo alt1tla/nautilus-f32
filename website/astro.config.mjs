@@ -15,11 +15,11 @@ export default defineConfig({
         {
           icon: 'github',
           label: 'GitHub',
-          href: 'https://github.com/joyautomation/nautilus',
+          href: 'https://github.com/alt1tla/nautilus-f32',
         },
       ],
       editLink: {
-        baseUrl: 'https://github.com/joyautomation/nautilus/edit/main/website/',
+        baseUrl: 'https://github.com/alt1tla/nautilus-f32/edit/main/website/',
       },
       sidebar: [
         {

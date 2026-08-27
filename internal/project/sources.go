@@ -6,8 +6,8 @@ import (
 	"path"
 	"strings"
 
-	"github.com/joyautomation/nautilus/internal/stproject"
-	"github.com/joyautomation/nautilus/runtime"
+	"github.com/alt1tla/nautilus-f32/internal/stproject"
+	"github.com/alt1tla/nautilus-f32/runtime"
 )
 
 // Sources returns every task's composed program source — libraries joined

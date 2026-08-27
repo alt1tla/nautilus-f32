@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/alt1tla/nautilus-f32/lang/ir"
+	"github.com/alt1tla/nautilus-f32/runtime"
+	"github.com/alt1tla/nautilus-f32/sparkplug/spb"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
-	"github.com/joyautomation/nautilus/lang/ir"
-	"github.com/joyautomation/nautilus/runtime"
-	"github.com/joyautomation/nautilus/sparkplug/spb"
 )
 
 // Config is the Sparkplug B edge-node identity and broker connection.

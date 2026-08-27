@@ -25,10 +25,10 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/joyautomation/nautilus/internal/stproject"
-	"github.com/joyautomation/nautilus/lang/ir"
-	"github.com/joyautomation/nautilus/lang/st"
-	"github.com/joyautomation/nautilus/runtime"
+	"github.com/alt1tla/nautilus-f32/internal/stproject"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
+	"github.com/alt1tla/nautilus-f32/lang/st"
+	"github.com/alt1tla/nautilus-f32/runtime"
 )
 
 // Expect is a conjunction of terms — all must hold.

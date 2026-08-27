@@ -18,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joyautomation/nautilus/lang/ir"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
 )
 
 const schemaPath = "../tools/vscode-iec/schemas/nautilus-test.schema.json"

@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/joyautomation/nautilus/lang/ir"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
 )
 
 // LowerOpts carries optional compile-time context for the lowerer.

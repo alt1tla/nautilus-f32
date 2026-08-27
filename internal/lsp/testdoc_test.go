@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joyautomation/nautilus/acceptance"
+	"github.com/alt1tla/nautilus-f32/acceptance"
 )
 
 // theExample is the flagship manifest project: four tasks, three IEC

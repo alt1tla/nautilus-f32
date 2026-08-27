@@ -8,12 +8,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/joyautomation/nautilus/internal/stproject"
-	"github.com/joyautomation/nautilus/lang/fbd"
-	"github.com/joyautomation/nautilus/lang/ir"
-	"github.com/joyautomation/nautilus/lang/ld"
-	"github.com/joyautomation/nautilus/lang/sfc"
-	"github.com/joyautomation/nautilus/lang/st"
+	"github.com/alt1tla/nautilus-f32/internal/stproject"
+	"github.com/alt1tla/nautilus-f32/lang/fbd"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
+	"github.com/alt1tla/nautilus-f32/lang/ld"
+	"github.com/alt1tla/nautilus-f32/lang/sfc"
+	"github.com/alt1tla/nautilus-f32/lang/st"
 )
 
 // Program is a compiled IEC 61131-3 program plus its retained frame (the

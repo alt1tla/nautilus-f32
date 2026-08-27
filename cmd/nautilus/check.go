@@ -9,13 +9,13 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/joyautomation/nautilus/internal/project"
-	"github.com/joyautomation/nautilus/internal/stproject"
-	"github.com/joyautomation/nautilus/lang/fbd"
-	"github.com/joyautomation/nautilus/lang/ld"
-	"github.com/joyautomation/nautilus/lang/sfc"
-	"github.com/joyautomation/nautilus/lang/st"
-	"github.com/joyautomation/nautilus/runtime"
+	"github.com/alt1tla/nautilus-f32/internal/project"
+	"github.com/alt1tla/nautilus-f32/internal/stproject"
+	"github.com/alt1tla/nautilus-f32/lang/fbd"
+	"github.com/alt1tla/nautilus-f32/lang/ld"
+	"github.com/alt1tla/nautilus-f32/lang/sfc"
+	"github.com/alt1tla/nautilus-f32/lang/st"
+	"github.com/alt1tla/nautilus-f32/runtime"
 )
 
 // runCheck compiles every .st file under the given paths (files or

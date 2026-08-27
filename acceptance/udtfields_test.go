@@ -13,8 +13,8 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/joyautomation/nautilus/acceptance"
-	"github.com/joyautomation/nautilus/internal/project"
+	"github.com/alt1tla/nautilus-f32/acceptance"
+	"github.com/alt1tla/nautilus-f32/internal/project"
 )
 
 const udtLib = `TYPE

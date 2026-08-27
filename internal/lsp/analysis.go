@@ -7,11 +7,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/joyautomation/nautilus/lang/fbd"
-	"github.com/joyautomation/nautilus/lang/ir"
-	"github.com/joyautomation/nautilus/lang/ld"
-	"github.com/joyautomation/nautilus/lang/sfc"
-	"github.com/joyautomation/nautilus/lang/st"
+	"github.com/alt1tla/nautilus-f32/lang/fbd"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
+	"github.com/alt1tla/nautilus-f32/lang/ld"
+	"github.com/alt1tla/nautilus-f32/lang/sfc"
+	"github.com/alt1tla/nautilus-f32/lang/st"
 )
 
 // Symbol is a declared name the LSP can navigate to: a variable, an FB

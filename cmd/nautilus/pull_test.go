@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joyautomation/nautilus/runtime"
-	"github.com/joyautomation/nautilus/server"
+	"github.com/alt1tla/nautilus-f32/runtime"
+	"github.com/alt1tla/nautilus-f32/server"
 )
 
 // A real runtime + server as the fake field controller: pull is exercised

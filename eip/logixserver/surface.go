@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/joyautomation/nautilus/eip/cip"
+	"github.com/alt1tla/nautilus-f32/eip/cip"
 )
 
 // TagSurfaceSpec is the declarative tag surface a Logix server advertises and

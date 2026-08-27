@@ -3,8 +3,8 @@ package sparkplug
 import (
 	"time"
 
+	"github.com/alt1tla/nautilus-f32/lang/ir"
 	mqtt "github.com/eclipse/paho.mqtt.golang"
-	"github.com/joyautomation/nautilus/lang/ir"
 )
 
 // handleCommand processes NCMD/DCMD. A "Node Control/Rebirth" = true triggers

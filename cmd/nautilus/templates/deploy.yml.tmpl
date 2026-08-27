@@ -26,7 +26,7 @@ jobs:
         # `nautilus build` emits from it — fully static, which the
         # distroless/static base image requires. Release binaries are
         # already built this way; `go install` is not, unless told.
-        run: CGO_ENABLED=0 go install github.com/joyautomation/nautilus/cmd/nautilus@latest
+        run: CGO_ENABLED=0 go install github.com/alt1tla/nautilus-f32/cmd/nautilus@latest
       # The same gates as CI: nothing ships that does not check and pass
       # its acceptance suites.
       - run: nautilus check .

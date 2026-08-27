@@ -20,7 +20,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/joyautomation/nautilus/internal/tagfile"
+	"github.com/alt1tla/nautilus-f32/internal/tagfile"
 )
 
 const tagsUsage = `nautilus tags — generate a tag file from a spreadsheet export

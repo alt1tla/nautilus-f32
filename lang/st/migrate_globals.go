@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/joyautomation/nautilus/lang/ir"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
 )
 
 // MigrateProgramGlobals rewrites src so every PLC-global referenced in the

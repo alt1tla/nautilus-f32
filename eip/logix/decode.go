@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/joyautomation/nautilus/eip/cip"
+	"github.com/alt1tla/nautilus-f32/eip/cip"
 )
 
 // Value is a decoded tag value: a scalar, an array, or a struct tree. Exactly

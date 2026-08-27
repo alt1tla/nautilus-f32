@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joyautomation/nautilus/acceptance"
-	"github.com/joyautomation/nautilus/internal/project"
-	"github.com/joyautomation/nautilus/internal/stproject"
-	"github.com/joyautomation/nautilus/lang/fbd"
-	"github.com/joyautomation/nautilus/lang/ld"
-	"github.com/joyautomation/nautilus/lang/st"
-	"github.com/joyautomation/nautilus/runtime"
+	"github.com/alt1tla/nautilus-f32/acceptance"
+	"github.com/alt1tla/nautilus-f32/internal/project"
+	"github.com/alt1tla/nautilus-f32/internal/stproject"
+	"github.com/alt1tla/nautilus-f32/lang/fbd"
+	"github.com/alt1tla/nautilus-f32/lang/ld"
+	"github.com/alt1tla/nautilus-f32/lang/st"
+	"github.com/alt1tla/nautilus-f32/runtime"
 )
 
 // Scaffold both variants into a temp dir and sanity-check the tree: the

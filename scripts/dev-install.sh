@@ -93,7 +93,7 @@ version="dev-${sha}${dirty}"
 echo "building nautilus $version"
 tmp="$dest_dir/.nautilus.$$"
 trap 'rm -f "$tmp"' EXIT
-go build -ldflags "-X github.com/joyautomation/nautilus/internal/lsp.Version=$version" \
+go build -ldflags "-X github.com/alt1tla/nautilus-f32/internal/lsp.Version=$version" \
   -o "$tmp" ./cmd/nautilus
 chmod 0755 "$tmp"
 # Rename within the destination directory: atomic, and safe while a

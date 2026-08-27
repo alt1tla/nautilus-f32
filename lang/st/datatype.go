@@ -3,7 +3,7 @@ package st
 import (
 	"strings"
 
-	"github.com/joyautomation/nautilus/lang/ir"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
 )
 
 // DatatypeToIRType maps a PLC variable's loosely-typed `datatype` string

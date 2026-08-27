@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joyautomation/nautilus/lang/ir"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
 )
 
 // runScans compiles src, runs len(times) scans setting inputs[i] and now=times[i]
@@ -147,13 +147,13 @@ END_PROGRAM`
 			t.Fatal(err)
 		}
 	}
-	run(map[string]ir.Value{"Fwd": ir.BoolVal(true)})               // Home→Work, pulse #1
-	run(map[string]ir.Value{"Fwd": ir.BoolVal(false)})              // Work, no pulse
-	run(nil)                                                        // Work, no pulse
+	run(map[string]ir.Value{"Fwd": ir.BoolVal(true)})  // Home→Work, pulse #1
+	run(map[string]ir.Value{"Fwd": ir.BoolVal(false)}) // Work, no pulse
+	run(nil)                                           // Work, no pulse
 	if h.vals["Count"].I != 1 {
 		t.Fatalf("after first activation Count=%d, want 1", h.vals["Count"].I)
 	}
-	run(map[string]ir.Value{"Back": ir.BoolVal(true)})              // Work→Home
+	run(map[string]ir.Value{"Back": ir.BoolVal(true)})                           // Work→Home
 	run(map[string]ir.Value{"Back": ir.BoolVal(false), "Fwd": ir.BoolVal(true)}) // Home→Work, pulse #2
 	if h.vals["Count"].I != 2 {
 		t.Fatalf("after re-entry Count=%d, want 2 (one pulse per activation)", h.vals["Count"].I)

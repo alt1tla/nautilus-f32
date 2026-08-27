@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joyautomation/nautilus/internal/stproject"
+	"github.com/alt1tla/nautilus-f32/internal/stproject"
 )
 
 const pullUsage = `nautilus pull — bring a controller's online edits back into the project

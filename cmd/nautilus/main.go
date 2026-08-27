@@ -5,14 +5,14 @@
 //	nautilus new        scaffold a new nautilus project (interactive)
 //	nautilus fbd graph  emit a .fbd file's diagram render model as JSON
 //
-// Install: go install github.com/joyautomation/nautilus/cmd/nautilus@latest
+// Install: go install github.com/alt1tla/nautilus-f32/cmd/nautilus@latest
 package main
 
 import (
 	"fmt"
 	"os"
 
-	"github.com/joyautomation/nautilus/internal/lsp"
+	"github.com/alt1tla/nautilus-f32/internal/lsp"
 )
 
 const usage = `nautilus — SCADA, built like software

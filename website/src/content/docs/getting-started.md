@@ -9,7 +9,7 @@ VS Code for the editor experience.
 ## 1. Install the CLI
 
 ```sh
-go install github.com/joyautomation/nautilus/cmd/nautilus@latest
+go install github.com/alt1tla/nautilus-f32/cmd/nautilus@latest
 ```
 
 This gives you `nautilus new` (scaffold a project), `nautilus check`
@@ -67,7 +67,7 @@ program:
 
 ```sh
 cd my-plant
-go mod tidy      # resolves github.com/joyautomation/nautilus from the proxy
+go mod tidy      # resolves github.com/alt1tla/nautilus-f32 from the proxy
 go run .         # scan loop + tag API on http://localhost:8080
 go test ./...    # the program's acceptance tests, on the same virtual clock
 ```

@@ -7,8 +7,8 @@
 // protoc). To regenerate after editing proto/sparkplug_b.proto:
 //
 //	protoc --proto_path=sparkplug/spb/proto --go_out=. \
-//	  --go_opt=module=github.com/joyautomation/nautilus \
-//	  --go_opt=Msparkplug_b.proto=github.com/joyautomation/nautilus/sparkplug/spb \
+//	  --go_opt=module=github.com/alt1tla/nautilus-f32 \
+//	  --go_opt=Msparkplug_b.proto=github.com/alt1tla/nautilus-f32/sparkplug/spb \
 //	  sparkplug/spb/proto/sparkplug_b.proto
 //
 // Requires protoc + protoc-gen-go v1.36.x (matching google.golang.org/protobuf).

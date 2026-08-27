@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/joyautomation/nautilus/lang/ir"
-	"github.com/joyautomation/nautilus/retain"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
+	"github.com/alt1tla/nautilus-f32/retain"
 )
 
 // fakeStore is an in-memory retain.Store whose failures are switchable, so

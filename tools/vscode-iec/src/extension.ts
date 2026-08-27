@@ -247,7 +247,7 @@ async function startLanguageClient(context: vscode.ExtensionContext): Promise<vo
       .then((pick) => {
         if (pick) {
           void vscode.env.clipboard.writeText(
-            "go install github.com/joyautomation/nautilus/cmd/nautilus@latest"
+            "go install github.com/alt1tla/nautilus-f32/cmd/nautilus@latest"
           );
         }
       });

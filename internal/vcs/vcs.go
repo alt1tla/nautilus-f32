@@ -22,8 +22,8 @@ import (
 	"testing/fstest"
 	"unicode/utf8"
 
-	"github.com/joyautomation/nautilus/acceptance"
-	"github.com/joyautomation/nautilus/server"
+	"github.com/alt1tla/nautilus-f32/acceptance"
+	"github.com/alt1tla/nautilus-f32/server"
 )
 
 // DefaultDepth bounds how many commits Capture walks. It is a cap on

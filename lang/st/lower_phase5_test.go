@@ -3,7 +3,7 @@ package st
 import (
 	"testing"
 
-	"github.com/joyautomation/nautilus/lang/ir"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
 )
 
 // fakeHost is a minimal Host for test programs that touch globals.

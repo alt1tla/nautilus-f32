@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joyautomation/nautilus/runtime"
+	"github.com/alt1tla/nautilus-f32/runtime"
 )
 
 // Scheduler replays a resource's tasks in virtual time: at each step it

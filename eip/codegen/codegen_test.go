@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joyautomation/nautilus/eip/logix"
-	"github.com/joyautomation/nautilus/lang/st"
+	"github.com/alt1tla/nautilus-f32/eip/logix"
+	"github.com/alt1tla/nautilus-f32/lang/st"
 )
 
 // fakeBrowse builds a BrowseResult like the client would return from a

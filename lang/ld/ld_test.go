@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joyautomation/nautilus/lang/fbd"
+	"github.com/alt1tla/nautilus-f32/lang/fbd"
 )
 
 const ladderSrc = `PROGRAM Main

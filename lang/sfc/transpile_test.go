@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joyautomation/nautilus/lang/ir"
-	"github.com/joyautomation/nautilus/lang/st"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
+	"github.com/alt1tla/nautilus-f32/lang/st"
 )
 
 // ─── test harness ────────────────────────────────────────────────────────────
@@ -155,17 +155,17 @@ func TestTranspileShape(t *testing.T) {
 		t.Fatalf("generated ST does not lower: %v\n%s", err, stSrc)
 	}
 	want := []string{
-		"_S_Idle_X : BOOL := TRUE;",                                            // cold-start initial step
-		"_S_Fill_X : BOOL;",                                                    // other steps default FALSE
-		"_en_t_full := _S_Fill_X AND (Level >= FillSP)",                        // enabled = source .X AND cond
-		"_f_t_full := _en_t_full AND NOT (_en_t_abort);",                       // enabled-based alt guard
-		"_en_t_done := _S_Heat_X AND _S_Mix_X AND ((TempC >= HeatSP) AND mixT.Q)", // convergence: both sources ANDed
+		"_S_Idle_X : BOOL := TRUE;",                                                 // cold-start initial step
+		"_S_Fill_X : BOOL;",                                                         // other steps default FALSE
+		"_en_t_full := _S_Fill_X AND (Level >= FillSP)",                             // enabled = source .X AND cond
+		"_f_t_full := _en_t_full AND NOT (_en_t_abort);",                            // enabled-based alt guard
+		"_en_t_done := _S_Heat_X AND _S_Mix_X AND ((TempC >= HeatSP) AND mixT.Q)",   // convergence: both sources ANDed
 		"RunLamp := _S_Idle_X OR _S_Fill_X OR _S_Heat_X OR _S_Mix_X OR _S_Drain_X;", // boolean OR-combine
 		"FillValve := _S_Fill_X;",
-		"_act_Stir_prev THEN",                     // final-scan wrapper
-		"Mixer := _S_Mix_X;",                      // body .X rewrite
-		"mixT(IN := _S_Mix_X, PT := T#30S);",      // body .X rewrite in FB call
-		"_S_Drain_X AND NOT _S_Drain_prev", // P1 pulse guard, no final scan
+		"_act_Stir_prev THEN",                // final-scan wrapper
+		"Mixer := _S_Mix_X;",                 // body .X rewrite
+		"mixT(IN := _S_Mix_X, PT := T#30S);", // body .X rewrite in FB call
+		"_S_Drain_X AND NOT _S_Drain_prev",   // P1 pulse guard, no final scan
 		"BatchCount := BatchCount + 1;",
 	}
 	for _, w := range want {

@@ -47,8 +47,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/joyautomation/nautilus/leader"
-	"github.com/joyautomation/nautilus/runtime"
+	"github.com/alt1tla/nautilus-f32/leader"
+	"github.com/alt1tla/nautilus-f32/runtime"
 )
 
 // indexHTML is the built-in landing page: a self-contained live dashboard

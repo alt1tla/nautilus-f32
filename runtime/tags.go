@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/joyautomation/nautilus/lang/ir"
+	"github.com/alt1tla/nautilus-f32/lang/ir"
 )
 
 // Tags is the ir.Host for the program's virtual machine: every VAR_EXTERNAL

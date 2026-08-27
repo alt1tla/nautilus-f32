@@ -8,7 +8,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/joyautomation/nautilus/acceptance"
+	"github.com/alt1tla/nautilus-f32/acceptance"
 )
 
 func loadSrc(t *testing.T, src string) (*acceptance.Suite, error) {

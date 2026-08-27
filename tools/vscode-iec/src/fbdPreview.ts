@@ -149,7 +149,7 @@ function fbdEdit(source: string, op: FbdEditOp): Promise<{ edits: FbdTextEdit[] 
 function cliMissing(cli: string): string {
   return (
     `Couldn't run "${cli}". Install the nautilus CLI:\n` +
-    "go install github.com/joyautomation/nautilus/cmd/nautilus@latest"
+    "go install github.com/alt1tla/nautilus-f32/cmd/nautilus@latest"
   );
 }
 
