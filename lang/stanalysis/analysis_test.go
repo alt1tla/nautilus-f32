@@ -171,3 +171,25 @@ END_PROGRAM`
 		t.Fatalf("float32 bit conversion diagnostics = %#v", result.Diagnostics)
 	}
 }
+
+func TestAnalyzeTargetVALIntrinsic(t *testing.T) {
+	source := `PROGRAM Main
+VAR Temperature : REAL; END_VAR
+Temperature := VAL('Controller1.Temperature');
+END_PROGRAM`
+	result := Analyze(source, Options{ScalarMode: Float32Scalar})
+	if !result.Valid() {
+		t.Fatalf("VAL diagnostics = %#v", result.Diagnostics)
+	}
+	if result.IR == nil || len(result.IR.Body) != 1 {
+		t.Fatalf("VAL did not produce IR: %#v", result.IR)
+	}
+	assignment, ok := result.IR.Body[0].(*ir.Assign)
+	if !ok {
+		t.Fatalf("VAL statement IR = %T, want *ir.Assign", result.IR.Body[0])
+	}
+	call, ok := assignment.Value.(*ir.Call)
+	if !ok || call.Name != "VAL" || call.ExprType() != ir.RealT {
+		t.Fatalf("VAL expression IR = %#v", assignment.Value)
+	}
+}

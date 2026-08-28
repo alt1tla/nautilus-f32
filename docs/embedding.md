@@ -135,6 +135,11 @@ In `Float32Scalar` mode:
 `FTB(value, index)` and `BTF(bits...)` use IEEE-754 float32 bit order. Index 0
 is least significant; valid indexes are `0..31`.
 
+`VAL(reference)` is a target intrinsic with signature `STRING -> REAL`. A
+backend should recognize the IR call named `VAL` and translate its string
+literal, for example `VAL('Controller1.Temperature')`, into its controller
+access mechanism. The inherited VM intentionally refuses to execute it.
+
 ## Concurrency
 
 `Analyze` creates per-call parser/lowerer state. Complete mutations through

@@ -13,6 +13,9 @@ func TestBuildCatalogContainsRequiredSTSurface(t *testing.T) {
 			t.Errorf("function catalog is missing %s", name)
 		}
 	}
+	if got := functions["VAL"]; got.MinArgs != 1 || got.MaxArgs != 1 || got.Result != "REAL" || len(got.Parameters) != 1 || got.Parameters[0] != "STRING" {
+		t.Errorf("VAL metadata = %#v", got)
+	}
 	if got := functions["FTB"]; got.MinArgs != 2 || got.MaxArgs != 2 || got.Result != "BOOL" {
 		t.Errorf("FTB metadata = %#v", got)
 	}

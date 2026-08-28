@@ -186,6 +186,26 @@ conversion functions:
 | `INT_TO_STRING`, `REAL_TO_STRING`, `BOOL_TO_STRING`, `TIME_TO_STRING` | formatting |
 | `STRING_TO_INT`, `STRING_TO_REAL`, `STRING_TO_BOOL` | parse; a non-parsing string is a runtime scan fault, so validate upstream |
 
+## Target intrinsics
+
+`nautilus-f32` recognizes target intrinsics that are intended to be consumed
+by an embedding compiler rather than executed by the inherited VM.
+
+| Function | Signature | Purpose |
+| --- | --- | --- |
+| `VAL` | `VAL(reference: STRING) -> REAL` | Read a controller value identified by a backend-defined string reference |
+
+Example:
+
+```st
+Temperature := VAL('Controller1.Temperature');
+```
+
+The ST frontend validates the single string argument and emits an IR call named
+`VAL`. The embedding compiler must translate that call into its controller
+access mechanism. Attempting to execute it in the inherited VM produces an
+explicit runtime error rather than a fabricated value.
+
 ## Standard function blocks
 
 Stateful — declare an instance (`VAR t1 : TON; END_VAR`, or inline in a
