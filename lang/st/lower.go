@@ -963,7 +963,22 @@ func (l *lowerer) lowerCallExpr(n *CallExpr) (ir.Expr, error) {
 		return nil, fmt.Errorf("function %s expects at least %d argument(s), got %d", sig.Name, len(sig.Params), len(args))
 	}
 	resultT := sig.Result
-	if sig.Coerce != nil {
+	float32OperatorFunction := l.scalarMode == Float32Scalar && isFloat32OperatorFunction(sig.Name)
+	if float32OperatorFunction {
+		if len(argTypes) < 2 {
+			return nil, fmt.Errorf("function %s expects at least 2 argument(s), got %d", sig.Name, len(argTypes))
+		}
+		for i, t := range argTypes {
+			if !isFloat32Scalar(t) {
+				return nil, fmt.Errorf("function %s arg %d: %s is not a float32 scalar", sig.Name, i+1, t)
+			}
+		}
+		if sig.Name == "MOD" {
+			resultT = ir.RealT
+		} else {
+			resultT = ir.BoolT
+		}
+	} else if sig.Coerce != nil {
 		t, err := sig.Coerce(argTypes)
 		if err != nil {
 			return nil, err
@@ -971,7 +986,7 @@ func (l *lowerer) lowerCallExpr(n *CallExpr) (ir.Expr, error) {
 		resultT = t
 	}
 	for i, p := range sig.Params {
-		if p == nil || i >= len(args) {
+		if float32OperatorFunction || p == nil || i >= len(args) {
 			continue
 		}
 		args[i] = l.coerce(args[i], p)
@@ -980,6 +995,15 @@ func (l *lowerer) lowerCallExpr(n *CallExpr) (ir.Expr, error) {
 		}
 	}
 	return &ir.Call{Name: sig.Name, Args: args, Fn: sig.Fn, T: resultT}, nil
+}
+
+func isFloat32OperatorFunction(name string) bool {
+	switch name {
+	case "AND", "OR", "XOR", "MOD":
+		return true
+	default:
+		return false
+	}
 }
 
 // lowerUserFuncCall resolves a CallExpr against a user-defined FUNCTION.

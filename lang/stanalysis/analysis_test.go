@@ -116,3 +116,20 @@ END_PROGRAM`
 		t.Fatalf("result = %#v, want a semantic diagnostic", result)
 	}
 }
+
+func TestFloat32ScalarOperatorFunctions(t *testing.T) {
+	source := `PROGRAM Main
+VAR
+    A : REAL;
+    B : REAL;
+    Logic : REAL;
+    Remainder : REAL;
+END_VAR
+Logic := AND(A, OR(B, XOR(A, B)));
+Remainder := MOD(A, B);
+END_PROGRAM`
+	result := Analyze(source, Options{ScalarMode: Float32Scalar})
+	if !result.Valid() {
+		t.Fatalf("float32 operator functions diagnostics = %#v", result.Diagnostics)
+	}
+}

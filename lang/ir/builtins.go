@@ -38,7 +38,86 @@ func RegisterBuiltin(sig BuiltinSig) {
 
 func init() {
 	registerArithBuiltins()
+	registerOperatorFunctions()
 	registerConversionBuiltins()
+}
+
+func registerOperatorFunctions() {
+	logicalType := func(name string) func([]*Type) (*Type, error) {
+		return func(ts []*Type) (*Type, error) {
+			if len(ts) < 2 {
+				return nil, fmt.Errorf("%s expects at least two arguments", name)
+			}
+			kind := ts[0].Kind
+			if kind != TypeBool && kind != TypeInt {
+				return nil, fmt.Errorf("%s expects BOOL or INT arguments", name)
+			}
+			for _, t := range ts[1:] {
+				if t.Kind != kind {
+					return nil, fmt.Errorf("%s arguments must share a type", name)
+				}
+			}
+			return ts[0], nil
+		}
+	}
+
+	logical := func(name string, boolFn func(bool, bool) bool, intFn func(int64, int64) int64) {
+		RegisterBuiltin(BuiltinSig{
+			Name: name, Params: []*Type{nil, nil}, Variadic: true, Coerce: logicalType(name),
+			Fn: func(args []Value) (Value, error) {
+				logicalValues := false
+				for _, arg := range args {
+					if arg.Kind != TypeInt {
+						logicalValues = true
+						break
+					}
+				}
+				if logicalValues {
+					result := scalarTruthy(args[0])
+					for _, arg := range args[1:] {
+						result = boolFn(result, scalarTruthy(arg))
+					}
+					return BoolVal(result), nil
+				}
+				result := args[0].I
+				for _, arg := range args[1:] {
+					result = intFn(result, arg.I)
+				}
+				return IntVal(result), nil
+			},
+		})
+	}
+	logical("AND", func(a, b bool) bool { return a && b }, func(a, b int64) int64 { return a & b })
+	logical("OR", func(a, b bool) bool { return a || b }, func(a, b int64) int64 { return a | b })
+	logical("XOR", func(a, b bool) bool { return a != b }, func(a, b int64) int64 { return a ^ b })
+
+	RegisterBuiltin(BuiltinSig{
+		Name: "MOD", Params: []*Type{IntT, IntT}, Result: IntT,
+		Fn: func(args []Value) (Value, error) {
+			if args[0].Kind == TypeReal || args[1].Kind == TypeReal {
+				divisor := asFloat(args[1])
+				if divisor == 0 {
+					return RealVal(0), nil
+				}
+				return RealVal(math.Mod(asFloat(args[0]), divisor)), nil
+			}
+			if args[1].I == 0 {
+				return IntVal(0), nil
+			}
+			return IntVal(args[0].I % args[1].I), nil
+		},
+	})
+}
+
+func scalarTruthy(v Value) bool {
+	switch v.Kind {
+	case TypeBool:
+		return v.B
+	case TypeReal:
+		return v.F != 0
+	default:
+		return v.I != 0
+	}
 }
 
 func registerArithBuiltins() {

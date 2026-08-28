@@ -999,6 +999,15 @@ func (p *Parser) parsePrimary() (Expression, error) {
 		return p.continuePostfix(expr)
 	case TokenIdent:
 		return p.parsePostfixChain()
+	case TokenAnd, TokenOr, TokenXor, TokenMod:
+		// IEC operator names are also standard function names. When followed
+		// by '(', parse AND(...), OR(...), XOR(...), and MOD(...) as ordinary
+		// calls while retaining their existing infix operator forms.
+		if p.peekAt(1).Type != TokenLParen {
+			return nil, fmt.Errorf("line %d: unexpected token %q", tok.Line, tok.Literal)
+		}
+		p.advance()
+		return p.continuePostfix(&IdentExpr{Name: strings.ToUpper(tok.Literal), Pos: pos})
 	default:
 		return nil, fmt.Errorf("line %d: unexpected token %q", tok.Line, tok.Literal)
 	}

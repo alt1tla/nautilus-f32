@@ -93,6 +93,46 @@ END_PROGRAM`
 	}
 }
 
+func TestOperatorNamesAlsoWorkAsFunctions(t *testing.T) {
+	host := newFakeHost()
+	src := `
+PROGRAM p
+VAR_GLOBAL
+    andBool : BOOL;
+    orBool : BOOL;
+    xorBool : BOOL;
+    andWord : INT;
+    modValue : INT;
+    infixValue : INT;
+END_VAR
+andBool := AND(TRUE, TRUE, FALSE);
+orBool := OR(FALSE, FALSE, TRUE);
+xorBool := XOR(TRUE, FALSE, TRUE);
+andWord := AND(15, 6);
+modValue := MOD(17, 5);
+infixValue := 17 MOD 5;
+END_PROGRAM`
+	compileAndRun(t, src, host)
+	if host.vals["andBool"].B {
+		t.Error("AND(TRUE, TRUE, FALSE) = TRUE, want FALSE")
+	}
+	if !host.vals["orBool"].B {
+		t.Error("OR(FALSE, FALSE, TRUE) = FALSE, want TRUE")
+	}
+	if host.vals["xorBool"].B {
+		t.Error("XOR(TRUE, FALSE, TRUE) = TRUE, want FALSE")
+	}
+	if got := host.vals["andWord"].I; got != 6 {
+		t.Errorf("AND(15, 6) = %d, want 6", got)
+	}
+	if got := host.vals["modValue"].I; got != 2 {
+		t.Errorf("MOD(17, 5) = %d, want 2", got)
+	}
+	if got := host.vals["infixValue"].I; got != 2 {
+		t.Errorf("17 MOD 5 = %d, want 2", got)
+	}
+}
+
 func TestBuiltinNumerics(t *testing.T) {
 	host := newFakeHost()
 	src := `
