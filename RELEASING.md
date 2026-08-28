@@ -1,70 +1,129 @@
-# Releasing nautilus
+# Releasing nautilus-f32
 
-Three artifacts, three version lines, one rule: **the repo is the source of
-truth, and a registry may never run ahead of it.** CI's `version-sync` job
-enforces the rule on every push; `publish.yml` makes registries catch up.
+This document covers releases of the independent
+`github.com/alt1tla/nautilus-f32` fork. The repository originated from
+[`joyautomation/nautilus`](https://github.com/joyautomation/nautilus), but
+fork releases are owned and versioned independently.
 
-| Artifact | Version lives in | Ships when | Where |
-|---|---|---|---|
-| CLI + Go libraries | git tag `v*` | you push the tag | GitHub Release: GoReleaser binaries + a VSIX |
-| VS Code extension | `tools/vscode-iec/package.json` | a version bump lands on main | VS Code Marketplace + Open VSX |
-| `@joyautomation/nautilus-hmi` | `hmi/package.json` | a version bump lands on main | npm |
+Do not use upstream npm, VS Code Marketplace, Open VSX, GoReleaser, or GitHub
+credentials to release this module.
 
-There are no manual `vsce publish` or `npm publish` runs anymore — publishing
-by hand puts the registry ahead of the repo, which is exactly the drift the
-guard rails exist to prevent.
+## Supported artifact
 
-## Ship the extension or the HMI kit
+The supported release artifact is the Go module:
 
-Bump the `version` in the package's `package.json` (extension: update its
-CHANGELOG too) in the same PR as the change, and merge. On the push to main,
-`publish.yml` compares each package's repo version against its registry:
-
-- versions equal → nothing to do (the workflow is idempotent on every push),
-- repo ahead → publish,
-- registry ahead → fail loudly: someone published out of band.
-
-**Extension channel convention** (VS Code Marketplace): odd minor =
-pre-release channel, even minor = stable. `0.9.x` publishes as pre-release;
-the first `0.10.x` bump would be the first stable release.
-
-## Cut a CLI release
-
-```sh
-git tag v0.3.2
-git push origin v0.3.2
+```text
+github.com/alt1tla/nautilus-f32
 ```
 
-That triggers `release.yml`: GoReleaser builds cross-platform CLI binaries
-onto a GitHub Release (the tag versions the CLI via ldflags), and a VSIX —
-built at the extension's own package.json version — is attached for offline
-installs. The tag versions the **Go module and CLI only**; it does not touch
-the extension or HMI versions.
+Primary public packages:
 
-## Guard rails
+```text
+github.com/alt1tla/nautilus-f32/lang/stanalysis
+github.com/alt1tla/nautilus-f32/lang/st
+github.com/alt1tla/nautilus-f32/lang/ir
+github.com/alt1tla/nautilus-f32/lang/stgen
+```
 
-- `version-sync` (in `ci.yml`) fails any push/PR where npm, the Marketplace,
-  or Open VSX has a higher version than the corresponding package.json.
-- `publish.yml` re-checks the same invariant before publishing.
-- Recovering from out-of-band drift: bump the repo package.json past the
-  registry version and merge.
+Inherited CLI, extension, HMI, and runtime directories are not automatically
+published as fork artifacts. Publishing them requires a separate ownership,
+renaming, credential, and compatibility audit.
 
-## Registry credentials (Settings → Secrets and variables → Actions)
+## Pre-release checklist
 
-- **`VSCE_PAT`** (secret) — VS Code Marketplace. Azure DevOps org, publisher
-  `joyauto` (already in `package.json`), Personal Access Token with
-  Marketplace → Manage scope.
-- **`OVSX_PAT`** (secret) — Open VSX. Eclipse Foundation account + signed
-  Publisher Agreement, `joyauto` namespace, access token.
-- **npm — OIDC, no secret.** On npmjs.com, the package's Settings → Trusted
-  Publisher must point at repo `joyautomation/nautilus`, workflow
-  **`publish.yml`** (npm verifies the workflow *filename*; it was previously
-  configured for `release.yml` — update it or CI publishes will be rejected).
-  Repository **variable** `PUBLISH_HMI` = `true` arms the publish step.
+1. Confirm `go.mod` declares:
 
-## Validating changes to the pipeline
+   ```go
+   module github.com/alt1tla/nautilus-f32
+   ```
 
-`ci.yml` runs `goreleaser check` on every push/PR, so a broken
-`.goreleaser.yaml` fails a normal CI run rather than a tagged release. To dry
--run a full build locally without publishing: `goreleaser release --snapshot
---clean`.
+2. Confirm Go source no longer imports the upstream module path:
+
+   ```sh
+   rg "github.com/joyautomation/nautilus" --glob "*.go"
+   ```
+
+3. Keep the upstream `LICENSE` and attribution.
+4. Update `README.md` and `docs/embedding.md` for public API changes.
+5. Review the working tree for unrelated or generated changes.
+
+## Validate
+
+Minimum supported suite:
+
+```sh
+go mod tidy
+go test ./lang/st ./lang/ir ./lang/stanalysis ./lang/stgen
+```
+
+When the environment supports inherited tools and fixtures, also run:
+
+```sh
+go test ./...
+```
+
+Record environment-specific failures separately. Never claim that the full
+suite passed when only selected packages ran.
+
+## Version policy
+
+Use semantic versions:
+
+- patch: compatible fixes and diagnostic improvements;
+- minor: compatible public APIs or ST features;
+- major: incompatible exported APIs, IR contracts, or target semantics.
+
+Use `v0.x.y` while the API is stabilizing and document breaking changes even
+during `v0`.
+
+## Create a release
+
+Commit and push the intended state, then create an annotated tag:
+
+```sh
+git status
+git add .
+git commit -m "prepare v0.1.0"
+git push origin main
+
+git tag -a v0.1.0 -m "nautilus-f32 v0.1.0"
+git push origin v0.1.0
+```
+
+No separate Go registry is required. A public GitHub repository and semantic
+Git tag are sufficient.
+
+Verify from a clean consumer:
+
+```sh
+go get github.com/alt1tla/nautilus-f32@v0.1.0
+go list -m github.com/alt1tla/nautilus-f32
+```
+
+## Test before tagging
+
+Remote commit:
+
+```sh
+go get github.com/alt1tla/nautilus-f32@<commit-hash>
+```
+
+Go records a pseudo-version. For local development, prefer:
+
+```go
+require github.com/alt1tla/nautilus-f32 v0.0.0
+
+replace github.com/alt1tla/nautilus-f32 => ../nautilus-f32
+```
+
+## Release notes
+
+Include public API changes, `Float32Scalar` changes, recognized ST features,
+IR migrations, known limitations, tests executed, and a statement that this
+is an independent fork.
+
+## Attribution
+
+Do not remove the Apache 2.0 license or imply that the fork was created from
+scratch. Retain applicable upstream notices when copying further work. Do not
+imply that upstream maintainers support, publish, or endorse a fork release.

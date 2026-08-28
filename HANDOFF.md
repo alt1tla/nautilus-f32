@@ -1,4 +1,9 @@
-# nautilus — session handoff
+# nautilus — upstream session handoff (archived)
+
+> **Fork note:** this file records historical upstream
+> `joyautomation/nautilus` development state. It is retained for provenance
+> and is not the roadmap or release policy of `alt1tla/nautilus-f32`. See
+> `README.md`, `docs/embedding.md`, and `RELEASING.md` for the maintained fork.
 
 Working notes for picking up development in a fresh session. See `README.md`
 for the vision/architecture and `RELEASING.md` for the release pipeline; this

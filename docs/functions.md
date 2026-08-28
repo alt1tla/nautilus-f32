@@ -1,5 +1,12 @@
 # Language reference: evaluation flow, functions, and function blocks
 
+> **Fork note:** `nautilus-f32` exposes two validation modes. `IECStrict`
+> preserves the original type rules described by this reference.
+> `Float32Scalar` allows `BOOL`, integer, `REAL`, and `TIME` values across
+> assignment/function/FB boundaries for a float32 target: zero is false,
+> nonzero is true, and numeric time values are milliseconds. Semantic IR types
+> remain distinct. See `docs/embedding.md`.
+
 This is the reference for what runs inside a nautilus controller: how a
 scan evaluates your logic in each IEC 61131-3 language, and what every
 built-in operator, function, and function block does — its arguments, its
@@ -81,8 +88,10 @@ non-BOOL (coils only assign BOOL). `=>` works in ST and FBD calls too.
 `BOOL`, `INT`, `DINT`, `UINT`, `UDINT`, `WORD`, `REAL`, `LREAL`, `TIME`,
 `STRING`, plus `ARRAY[lo..hi] OF T` and user `TYPE ... STRUCT`.
 
-- Integer kinds share one 64-bit runtime representation; `REAL`/`LREAL`
-  are float64.
+- In the inherited runtime, integer kinds share one 64-bit representation and
+  `REAL`/`LREAL` are float64. An embedding compiler using `Float32Scalar`
+  targets float32 scalar storage instead; the runtime representation is not
+  the target ABI.
 - `TIME` counts **milliseconds** internally. Literals: `T#500MS`, `T#5S`,
   `T#2M30S`. TIME values compare with the ordinary comparisons.
 - Mixed numeric arguments promote to REAL; comparing or combining a
@@ -164,8 +173,9 @@ clamp to the string instead of faulting.
 
 ## Type conversions
 
-Explicit, in the standard's `X_TO_Y` naming — there are no implicit
-conversions across kinds:
+In `IECStrict`, conversions are explicit in the standard's `X_TO_Y` naming.
+In `Float32Scalar`, scalar assignment and call boundaries do not require these
+conversion functions:
 
 | Conversion | Notes |
 | --- | --- |
