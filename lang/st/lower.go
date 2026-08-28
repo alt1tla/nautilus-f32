@@ -899,7 +899,7 @@ func (l *lowerer) lowerAssign(a *AssignStmt) (ir.Stmt, error) {
 func (l *lowerer) lowerExpr(e Expression) (ir.Expr, error) {
 	switch n := e.(type) {
 	case *NumberLit:
-		return lowerNumberLit(n)
+		return l.lowerNumberLit(n)
 	case *BoolLit:
 		return &ir.Lit{V: ir.BoolVal(n.Value), T: ir.BoolT}, nil
 	case *StringLit:
@@ -1076,10 +1076,27 @@ func (l *lowerer) lowerUserFuncCall(n *CallExpr, def *ir.FuncDef) (ir.Expr, erro
 	return &ir.UserCall{Def: def, Args: bound, T: def.ReturnType}, nil
 }
 
-func lowerNumberLit(n *NumberLit) (ir.Expr, error) {
+func (l *lowerer) lowerNumberLit(n *NumberLit) (ir.Expr, error) {
 	base := n.Base
 	if base == 0 {
 		base = 10
+	}
+	if l.scalarMode == Float32Scalar {
+		var value float64
+		var err error
+		if base == 10 {
+			value, err = strconv.ParseFloat(n.Value, 32)
+		} else {
+			var integer int64
+			integer, err = strconv.ParseInt(n.Value, base, 64)
+			value = float64(float32(integer))
+		}
+		if err != nil {
+			return nil, err
+		}
+		// Value.F remains the inherited VM carrier, but the value has already
+		// been rounded to the target's float32 precision.
+		return &ir.Lit{V: ir.RealVal(float64(float32(value))), T: ir.RealT}, nil
 	}
 	if base == 10 && strings.ContainsAny(n.Value, ".eE") {
 		v, err := strconv.ParseFloat(n.Value, 64)

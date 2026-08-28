@@ -154,6 +154,37 @@ END_PROGRAM`
 	}
 }
 
+func TestDefaultModeTreatsAllNumericLiteralsAsFloat32Real(t *testing.T) {
+	source := `PROGRAM Main
+VAR
+    a : REAL;
+    b : REAL;
+END_VAR
+a := 10;
+b := MOD(a, 5);
+END_PROGRAM`
+	result := Analyze(source, Options{})
+	if !result.Valid() {
+		t.Fatalf("default float32 analysis diagnostics = %#v", result.Diagnostics)
+	}
+	for _, statement := range result.IR.Body {
+		assignment, ok := statement.(*ir.Assign)
+		if !ok {
+			continue
+		}
+		if literal, ok := assignment.Value.(*ir.Lit); ok && literal.ExprType() != ir.RealT {
+			t.Fatalf("numeric literal type = %s, want REAL", literal.ExprType())
+		}
+		if call, ok := assignment.Value.(*ir.Call); ok {
+			for _, argument := range call.Args {
+				if literal, ok := argument.(*ir.Lit); ok && literal.ExprType() != ir.RealT {
+					t.Fatalf("function literal argument type = %s, want REAL", literal.ExprType())
+				}
+			}
+		}
+	}
+}
+
 func TestFloat32ScalarBitConversionFunctions(t *testing.T) {
 	source := `PROGRAM Main
 VAR

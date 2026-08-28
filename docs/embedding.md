@@ -124,11 +124,13 @@ with public FB pins.
 
 ## Backend guidance
 
-In `Float32Scalar` mode:
+`Float32Scalar` is the default mode of `stanalysis.Analyze`. In this mode:
 
 - boolean context compares a scalar with zero;
 - `TIME` is measured in milliseconds;
 - real target arithmetic uses float32;
+- untyped numeric literals such as `5` and `5.0` both lower as `REAL` values
+  rounded to float32 precision;
 - each FB instance requires independent state;
 - arrays and structures preserve their declared shape.
 

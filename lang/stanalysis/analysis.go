@@ -57,11 +57,12 @@ type Options struct {
 type ScalarMode uint8
 
 const (
-	IECStrict ScalarMode = iota
 	// Float32Scalar accepts BOOL, integer, REAL, and TIME values at each
 	// other's assignment and call boundaries. The target represents them as
 	// float32, interprets zero as false, and interprets TIME as milliseconds.
-	Float32Scalar
+	// It is the default mode of the public analysis API.
+	Float32Scalar ScalarMode = iota
+	IECStrict
 )
 
 // Result contains every artifact produced by Analyze. AST remains available
@@ -107,7 +108,7 @@ func Analyze(source string, opts Options) Result {
 		UserFBs:         opts.UserFBs,
 		UserFuncs:       opts.UserFuncs,
 		ImplicitGlobals: opts.ImplicitGlobals,
-		ScalarMode:      st.ScalarMode(opts.ScalarMode),
+		ScalarMode:      lowerScalarMode(opts.ScalarMode),
 	})
 	if err != nil {
 		pos := st.Pos{Line: 1, Col: 1}
@@ -132,6 +133,13 @@ func Analyze(source string, opts Options) Result {
 
 	result.IR = program
 	return result
+}
+
+func lowerScalarMode(mode ScalarMode) st.ScalarMode {
+	if mode == IECStrict {
+		return st.IECStrict
+	}
+	return st.Float32Scalar
 }
 
 func collectSymbols(program *st.Program) []Symbol {

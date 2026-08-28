@@ -80,13 +80,16 @@ document versions, cancellation, and JSON conversion.
 
 `IECStrict` preserves upstream IEC type boundaries.
 
-`Float32Scalar` models a target where `BOOL`, integer, `REAL`, and `TIME`
+`Float32Scalar` is the default public analysis mode. It models a target where
+`BOOL`, integer, `REAL`, and `TIME`
 values share a float32-oriented representation at assignment and call
 boundaries:
 
 - zero is false and any nonzero scalar is true;
 - numeric `TIME` is measured in milliseconds;
 - explicit conversion functions are unnecessary between these scalar kinds;
+- every untyped numeric literal, including `10` and `5`, lowers as a
+  float32-rounded `REAL` rather than an `INT`;
 - semantic IR types remain available to the backend;
 - strings, arrays, structures, and FB instances remain distinct.
 
