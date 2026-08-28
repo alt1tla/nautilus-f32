@@ -963,17 +963,27 @@ func (l *lowerer) lowerCallExpr(n *CallExpr) (ir.Expr, error) {
 		return nil, fmt.Errorf("function %s expects at least %d argument(s), got %d", sig.Name, len(sig.Params), len(args))
 	}
 	resultT := sig.Result
-	float32OperatorFunction := l.scalarMode == Float32Scalar && isFloat32OperatorFunction(sig.Name)
+	float32OperatorFunction := l.scalarMode == Float32Scalar && isFloat32ScalarFunction(sig.Name)
 	if float32OperatorFunction {
-		if len(argTypes) < 2 {
-			return nil, fmt.Errorf("function %s expects at least 2 argument(s), got %d", sig.Name, len(argTypes))
+		minArgs, maxArgs := 2, -1
+		switch sig.Name {
+		case "MOD", "FTB":
+			maxArgs = 2
+		case "BTF":
+			minArgs, maxArgs = 1, 32
+		}
+		if len(argTypes) < minArgs || maxArgs >= 0 && len(argTypes) > maxArgs {
+			if maxArgs == minArgs {
+				return nil, fmt.Errorf("function %s expects %d argument(s), got %d", sig.Name, minArgs, len(argTypes))
+			}
+			return nil, fmt.Errorf("function %s expects %d..%d argument(s), got %d", sig.Name, minArgs, maxArgs, len(argTypes))
 		}
 		for i, t := range argTypes {
 			if !isFloat32Scalar(t) {
 				return nil, fmt.Errorf("function %s arg %d: %s is not a float32 scalar", sig.Name, i+1, t)
 			}
 		}
-		if sig.Name == "MOD" {
+		if sig.Name == "MOD" || sig.Name == "BTF" {
 			resultT = ir.RealT
 		} else {
 			resultT = ir.BoolT
@@ -997,9 +1007,9 @@ func (l *lowerer) lowerCallExpr(n *CallExpr) (ir.Expr, error) {
 	return &ir.Call{Name: sig.Name, Args: args, Fn: sig.Fn, T: resultT}, nil
 }
 
-func isFloat32OperatorFunction(name string) bool {
+func isFloat32ScalarFunction(name string) bool {
 	switch name {
-	case "AND", "OR", "XOR", "MOD":
+	case "AND", "OR", "XOR", "MOD", "BTF", "FTB":
 		return true
 	default:
 		return false

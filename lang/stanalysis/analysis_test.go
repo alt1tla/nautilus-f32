@@ -133,3 +133,21 @@ END_PROGRAM`
 		t.Fatalf("float32 operator functions diagnostics = %#v", result.Diagnostics)
 	}
 }
+
+func TestFloat32ScalarBitConversionFunctions(t *testing.T) {
+	source := `PROGRAM Main
+VAR
+    Value : REAL;
+    Bit0 : REAL;
+    Bit1 : REAL;
+    Rebuilt : REAL;
+END_VAR
+Bit0 := FTB(Value, 0.0);
+Bit1 := FTB(Value, 1.0);
+Rebuilt := BTF(Bit0, Bit1);
+END_PROGRAM`
+	result := Analyze(source, Options{ScalarMode: Float32Scalar})
+	if !result.Valid() {
+		t.Fatalf("float32 bit conversion diagnostics = %#v", result.Diagnostics)
+	}
+}

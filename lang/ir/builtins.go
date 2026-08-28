@@ -39,7 +39,51 @@ func RegisterBuiltin(sig BuiltinSig) {
 func init() {
 	registerArithBuiltins()
 	registerOperatorFunctions()
+	registerFloatBitFunctions()
 	registerConversionBuiltins()
+}
+
+// registerFloatBitFunctions adds the float32 bit bridge used by ST source.
+// FTB reads one IEEE-754 bit (index 0 is least significant); BTF performs
+// the inverse operation from one to 32 low-to-high input bits.
+func registerFloatBitFunctions() {
+	RegisterBuiltin(BuiltinSig{
+		Name: "FTB", Params: []*Type{RealT, IntT}, Result: BoolT,
+		Fn: func(args []Value) (Value, error) {
+			index := args[1].I
+			if args[1].Kind == TypeReal {
+				index = int64(args[1].F)
+			}
+			if index < 0 || index >= 32 {
+				return Value{}, fmt.Errorf("FTB bit index %d out of range 0..31", index)
+			}
+			bits := math.Float32bits(float32(asFloat(args[0])))
+			return BoolVal(bits&(uint32(1)<<uint(index)) != 0), nil
+		},
+	})
+	RegisterBuiltin(BuiltinSig{
+		Name: "BTF", Params: []*Type{BoolT}, Variadic: true,
+		Coerce: func(ts []*Type) (*Type, error) {
+			if len(ts) < 1 || len(ts) > 32 {
+				return nil, fmt.Errorf("BTF expects 1..32 bit arguments")
+			}
+			for _, t := range ts {
+				if t.Kind != TypeBool {
+					return nil, fmt.Errorf("BTF expects BOOL arguments")
+				}
+			}
+			return RealT, nil
+		},
+		Fn: func(args []Value) (Value, error) {
+			var bits uint32
+			for index, arg := range args {
+				if scalarTruthy(arg) {
+					bits |= uint32(1) << uint(index)
+				}
+			}
+			return RealVal(float64(math.Float32frombits(bits))), nil
+		},
+	})
 }
 
 func registerOperatorFunctions() {
