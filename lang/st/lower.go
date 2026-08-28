@@ -25,7 +25,19 @@ type LowerOpts struct {
 	UserFBs         map[string]*ir.FBDef
 	UserFuncs       map[string]*ir.FuncDef
 	ImplicitGlobals map[string]*ir.Type
+	ScalarMode      ScalarMode
 }
+
+// ScalarMode controls assignment and call compatibility for elementary
+// values. IECStrict preserves IEC type distinctions. Float32Scalar models a
+// target where BOOL, integer, REAL, and TIME values share one float32 storage
+// representation; zero is false and TIME values are milliseconds.
+type ScalarMode uint8
+
+const (
+	IECStrict ScalarMode = iota
+	Float32Scalar
+)
 
 // Lower converts a parsed ST program into typed IR.
 //
@@ -114,6 +126,7 @@ func LowerWithOpts(prog *Program, opts LowerOpts) (*ir.Program, error) {
 	l := newLowerer(prog, combined)
 	l.userFuncs = combinedFuncs
 	l.implicitGlobals = opts.ImplicitGlobals
+	l.scalarMode = opts.ScalarMode
 	if err := l.collectTypes(); err != nil {
 		return nil, err
 	}
@@ -137,7 +150,7 @@ func LowerWithOpts(prog *Program, opts LowerOpts) (*ir.Program, error) {
 	// every in-file FB plus the engine-supplied registry.
 	for _, fbDecl := range prog.FBDecls {
 		def := inFile[fbDecl.Name]
-		if err := lowerFBBody(fbDecl, def, combined, combinedFuncs); err != nil {
+		if err := lowerFBBody(fbDecl, def, combined, combinedFuncs, opts.ScalarMode); err != nil {
 			return nil, err
 		}
 		l.irProg.UserFBs = append(l.irProg.UserFBs, def)
@@ -146,7 +159,7 @@ func LowerWithOpts(prog *Program, opts LowerOpts) (*ir.Program, error) {
 	// (and user FBs) since both registries are now populated.
 	for _, fd := range prog.FuncDecls {
 		def := inFileFuncs[fd.Name]
-		if err := lowerFuncBody(fd, def, combined, combinedFuncs); err != nil {
+		if err := lowerFuncBody(fd, def, combined, combinedFuncs, opts.ScalarMode); err != nil {
 			return nil, err
 		}
 		l.irProg.UserFuncs = append(l.irProg.UserFuncs, def)
@@ -210,7 +223,7 @@ func populateFBSignature(fbDecl *FunctionBlockDecl, def *ir.FBDef, userFBs map[s
 // installs a Step closure on def. The body lowers against a synthetic
 // Program whose VarBlocks are reordered to VAR_INPUT ‖ VAR_OUTPUT ‖ VAR
 // so the resulting Slots match FBInstance.Slots index-for-index.
-func lowerFBBody(fbDecl *FunctionBlockDecl, def *ir.FBDef, userFBs map[string]*ir.FBDef, userFuncs map[string]*ir.FuncDef) error {
+func lowerFBBody(fbDecl *FunctionBlockDecl, def *ir.FBDef, userFBs map[string]*ir.FBDef, userFuncs map[string]*ir.FuncDef, scalarMode ScalarMode) error {
 	var inputBlocks, outputBlocks, internalBlocks, globalBlocks []VarBlock
 	for _, vb := range fbDecl.VarBlocks {
 		switch vb.Kind {
@@ -233,6 +246,7 @@ func lowerFBBody(fbDecl *FunctionBlockDecl, def *ir.FBDef, userFBs map[string]*i
 	bodyProg := &Program{Name: fbDecl.Name, VarBlocks: blocks, Statements: fbDecl.Statements}
 	sub := newLowerer(bodyProg, userFBs)
 	sub.userFuncs = userFuncs
+	sub.scalarMode = scalarMode
 	if err := sub.collectVars(); err != nil {
 		return fmt.Errorf("FUNCTION_BLOCK %s: %w", fbDecl.Name, err)
 	}
@@ -296,7 +310,7 @@ func populateFuncSignature(decl *FunctionDecl, def *ir.FuncDef, userFBs map[stri
 // closure on def. The body lowers against a synthetic Program whose
 // VarBlocks are reordered VAR_INPUT ‖ VAR (locals) ‖ <return slot>, so
 // the per-call Frame.Slots layout matches def's FrameSize.
-func lowerFuncBody(decl *FunctionDecl, def *ir.FuncDef, userFBs map[string]*ir.FBDef, userFuncs map[string]*ir.FuncDef) error {
+func lowerFuncBody(decl *FunctionDecl, def *ir.FuncDef, userFBs map[string]*ir.FBDef, userFuncs map[string]*ir.FuncDef, scalarMode ScalarMode) error {
 	var inputBlocks, localBlocks, globalBlocks []VarBlock
 	for _, vb := range decl.VarBlocks {
 		switch vb.Kind {
@@ -328,6 +342,7 @@ func lowerFuncBody(decl *FunctionDecl, def *ir.FuncDef, userFBs map[string]*ir.F
 	bodyProg := &Program{Name: decl.Name, VarBlocks: blocks, Statements: decl.Statements}
 	sub := newLowerer(bodyProg, userFBs)
 	sub.userFuncs = userFuncs
+	sub.scalarMode = scalarMode
 	if err := sub.collectVars(); err != nil {
 		return fmt.Errorf("FUNCTION %s: %w", decl.Name, err)
 	}
@@ -351,6 +366,7 @@ type lowerer struct {
 	userFBs         map[string]*ir.FBDef   // optional; consulted for FB type resolution
 	userFuncs       map[string]*ir.FuncDef // optional; consulted at call sites for bare-name lookup
 	implicitGlobals map[string]*ir.Type    // optional; PLC project vars surfaced as globals
+	scalarMode      ScalarMode
 	// returnSlot, when >= 0, marks the slot the bare function-name
 	// identifier should bind to inside a FUNCTION body so `Name := value`
 	// assigns the return value rather than failing as undeclared.
@@ -666,7 +682,7 @@ func (l *lowerer) lowerStmt(s Statement) (ir.Stmt, error) {
 		if err != nil {
 			return nil, err
 		}
-		if cond.ExprType().Kind != ir.TypeBool {
+		if !l.conditionType(cond.ExprType()) {
 			return nil, fmt.Errorf("IF condition must be BOOL, got %s", cond.ExprType())
 		}
 		thenB, err := l.lowerStmts(n.Then)
@@ -683,7 +699,7 @@ func (l *lowerer) lowerStmt(s Statement) (ir.Stmt, error) {
 			if err != nil {
 				return nil, err
 			}
-			if ec.ExprType().Kind != ir.TypeBool {
+			if !l.conditionType(ec.ExprType()) {
 				return nil, fmt.Errorf("ELSIF condition must be BOOL, got %s", ec.ExprType())
 			}
 			eb, err := l.lowerStmts(n.ElsIfs[i].Body)
@@ -731,7 +747,7 @@ func (l *lowerer) lowerStmt(s Statement) (ir.Stmt, error) {
 		if err != nil {
 			return nil, err
 		}
-		if cond.ExprType().Kind != ir.TypeBool {
+		if !l.conditionType(cond.ExprType()) {
 			return nil, fmt.Errorf("WHILE condition must be BOOL, got %s", cond.ExprType())
 		}
 		body, err := l.lowerStmts(n.Body)
@@ -749,7 +765,7 @@ func (l *lowerer) lowerStmt(s Statement) (ir.Stmt, error) {
 		if err != nil {
 			return nil, err
 		}
-		if cond.ExprType().Kind != ir.TypeBool {
+		if !l.conditionType(cond.ExprType()) {
 			return nil, fmt.Errorf("UNTIL condition must be BOOL, got %s", cond.ExprType())
 		}
 		return &ir.Repeat{Body: body, Cond: cond}, nil
@@ -835,7 +851,10 @@ func (l *lowerer) lowerCallStmt(n *CallStmt) (ir.Stmt, error) {
 		if err != nil {
 			return nil, fmt.Errorf("FB %s arg %q: %w", def.Name, na.Name, err)
 		}
-		v = coerce(v, def.Inputs[idx].Type)
+		v = l.coerce(v, def.Inputs[idx].Type)
+		if !l.assignable(def.Inputs[idx].Type, v.ExprType()) {
+			return nil, fmt.Errorf("FB %s arg %q: cannot pass %s as %s", def.Name, na.Name, v.ExprType(), def.Inputs[idx].Type)
+		}
 		bindings = append(bindings, ir.FBInput{SlotIdx: idx, Value: v})
 	}
 	outputs := make([]ir.FBOutput, 0, len(n.Call.OutputBindings))
@@ -868,8 +887,8 @@ func (l *lowerer) lowerAssign(a *AssignStmt) (ir.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-	value = coerce(value, target.ExprType())
-	if !assignable(target.ExprType(), value.ExprType()) {
+	value = l.coerce(value, target.ExprType())
+	if !l.assignable(target.ExprType(), value.ExprType()) {
 		return nil, fmt.Errorf("cannot assign %s to %s", value.ExprType(), target.ExprType())
 	}
 	return &ir.Assign{Target: target, Value: value}, nil
@@ -955,8 +974,8 @@ func (l *lowerer) lowerCallExpr(n *CallExpr) (ir.Expr, error) {
 		if p == nil || i >= len(args) {
 			continue
 		}
-		args[i] = coerce(args[i], p)
-		if !assignable(p, args[i].ExprType()) {
+		args[i] = l.coerce(args[i], p)
+		if !l.assignable(p, args[i].ExprType()) {
 			return nil, fmt.Errorf("function %s arg %d: cannot pass %s as %s", sig.Name, i+1, args[i].ExprType(), p)
 		}
 	}
@@ -992,8 +1011,8 @@ func (l *lowerer) lowerUserFuncCall(n *CallExpr, def *ir.FuncDef) (ir.Expr, erro
 			if err != nil {
 				return nil, fmt.Errorf("FUNCTION %s arg %s: %w", def.Name, na.Name, err)
 			}
-			v = coerce(v, def.Inputs[idx].Type)
-			if !assignable(def.Inputs[idx].Type, v.ExprType()) {
+			v = l.coerce(v, def.Inputs[idx].Type)
+			if !l.assignable(def.Inputs[idx].Type, v.ExprType()) {
 				return nil, fmt.Errorf("FUNCTION %s arg %s: cannot pass %s as %s", def.Name, na.Name, v.ExprType(), def.Inputs[idx].Type)
 			}
 			bound[idx] = v
@@ -1013,8 +1032,8 @@ func (l *lowerer) lowerUserFuncCall(n *CallExpr, def *ir.FuncDef) (ir.Expr, erro
 			if err != nil {
 				return nil, fmt.Errorf("FUNCTION %s arg %d: %w", def.Name, i+1, err)
 			}
-			v = coerce(v, def.Inputs[i].Type)
-			if !assignable(def.Inputs[i].Type, v.ExprType()) {
+			v = l.coerce(v, def.Inputs[i].Type)
+			if !l.assignable(def.Inputs[i].Type, v.ExprType()) {
 				return nil, fmt.Errorf("FUNCTION %s arg %d: cannot pass %s as %s", def.Name, i+1, v.ExprType(), def.Inputs[i].Type)
 			}
 			bound[i] = v
@@ -1268,7 +1287,7 @@ func intToReal(e ir.Expr) ir.Expr {
 	return &ir.BinOp{Op: ir.OpAdd, L: e, R: &ir.Lit{V: ir.RealVal(0), T: ir.RealT}, T: ir.RealT}
 }
 
-func coerce(e ir.Expr, want *ir.Type) ir.Expr {
+func (l *lowerer) coerce(e ir.Expr, want *ir.Type) ir.Expr {
 	if want == nil || e.ExprType().Equal(want) {
 		return e
 	}
@@ -1278,12 +1297,31 @@ func coerce(e ir.Expr, want *ir.Type) ir.Expr {
 	return e
 }
 
-func assignable(lhs, rhs *ir.Type) bool {
+func (l *lowerer) assignable(lhs, rhs *ir.Type) bool {
 	if lhs.Equal(rhs) {
 		return true
 	}
 	if lhs.Kind == ir.TypeReal && rhs.Kind == ir.TypeInt {
 		return true
 	}
+	if l.scalarMode == Float32Scalar && isFloat32Scalar(lhs) && isFloat32Scalar(rhs) {
+		return true
+	}
 	return false
+}
+
+func (l *lowerer) conditionType(t *ir.Type) bool {
+	return t != nil && (t.Kind == ir.TypeBool || l.scalarMode == Float32Scalar && isFloat32Scalar(t))
+}
+
+func isFloat32Scalar(t *ir.Type) bool {
+	if t == nil {
+		return false
+	}
+	switch t.Kind {
+	case ir.TypeBool, ir.TypeInt, ir.TypeReal, ir.TypeTime:
+		return true
+	default:
+		return false
+	}
 }
