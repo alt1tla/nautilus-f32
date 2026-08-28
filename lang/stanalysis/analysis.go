@@ -5,6 +5,8 @@
 package stanalysis
 
 import (
+	"strings"
+
 	"github.com/alt1tla/nautilus-f32/lang/ir"
 	"github.com/alt1tla/nautilus-f32/lang/st"
 )
@@ -44,6 +46,10 @@ type Options struct {
 	UserFuncs       map[string]*ir.FuncDef
 	ImplicitGlobals map[string]*ir.Type
 	ScalarMode      ScalarMode
+	// Prelude is ST library source that is in scope before Source. It is
+	// compiled together with the document, while AST, Symbols, and diagnostic
+	// positions remain relative to the document passed to Analyze.
+	Prelude string
 }
 
 // ScalarMode selects the elementary-value compatibility rules used during
@@ -62,7 +68,10 @@ const (
 // after semantic failure; IR is available only when parsing and lowering both
 // succeed.
 type Result struct {
-	AST         *st.Program  `json:"-"`
+	AST *st.Program `json:"-"`
+	// ContextAST includes Prelude followed by the analyzed source. It is
+	// useful to language servers for hover/member indexes across files.
+	ContextAST  *st.Program  `json:"-"`
 	IR          *ir.Program  `json:"-"`
 	Diagnostics []Diagnostic `json:"diagnostics,omitempty"`
 	Symbols     []Symbol     `json:"symbols,omitempty"`
@@ -84,8 +93,17 @@ func Analyze(source string, opts Options) Result {
 		return Result{Diagnostics: []Diagnostic{{Stage: StageSyntax, Message: err.Error(), Pos: pos}}}
 	}
 
-	result := Result{AST: ast, Symbols: collectSymbols(ast)}
-	program, err := st.LowerWithOpts(ast, st.LowerOpts{
+	result := Result{AST: ast, ContextAST: ast, Symbols: collectSymbols(ast)}
+	lowerAST := ast
+	preludeLines := 0
+	if opts.Prelude != "" {
+		if combined, combinedErr := st.Parse(opts.Prelude + source); combinedErr == nil {
+			lowerAST = combined
+			result.ContextAST = combined
+			preludeLines = strings.Count(opts.Prelude, "\n")
+		}
+	}
+	program, err := st.LowerWithOpts(lowerAST, st.LowerOpts{
 		UserFBs:         opts.UserFBs,
 		UserFuncs:       opts.UserFuncs,
 		ImplicitGlobals: opts.ImplicitGlobals,
@@ -99,6 +117,14 @@ func Analyze(source string, opts Options) Result {
 				pos = lowerErr.Pos
 			}
 			message = lowerErr.Err.Error()
+		}
+		if preludeLines > 0 {
+			if pos.Line > preludeLines {
+				pos.Line -= preludeLines
+			} else {
+				pos = st.Pos{Line: 1, Col: 1}
+				message = "in project library files: " + message
+			}
 		}
 		result.Diagnostics = []Diagnostic{{Stage: StageSemantic, Message: message, Pos: pos}}
 		return result

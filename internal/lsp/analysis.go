@@ -12,6 +12,7 @@ import (
 	"github.com/alt1tla/nautilus-f32/lang/ld"
 	"github.com/alt1tla/nautilus-f32/lang/sfc"
 	"github.com/alt1tla/nautilus-f32/lang/st"
+	"github.com/alt1tla/nautilus-f32/lang/stanalysis"
 )
 
 // Symbol is a declared name the LSP can navigate to: a variable, an FB
@@ -58,68 +59,32 @@ type scope struct {
 // is in scope at runtime; it participates in lowering so cross-file types
 // resolve, with diagnostic positions remapped back into the user's file.
 // preludeLines is the prelude's line count.
-func analyze(text, prelude string, preludeLines int) analysis {
-	var a analysis
-	a.scopes = scanScopes(text)
-
-	prog, err := st.Parse(text)
-	if err != nil {
-		// Anchor on the position the parser reported, falling back to line 1.
-		// st.ParseErrorPos is the single source of truth so `nautilus check`
-		// and this diagnostic agree.
-		line := 1
-		if pos, ok := st.ParseErrorPos(err); ok {
-			line = pos.Line
-		}
-		a.Diags = append(a.Diags, Diagnostic{
-			Range:    lineRange(text, line),
-			Severity: SeverityError,
-			Source:   "nautilus-st",
-			Message:  err.Error(),
+func analyze(text, prelude string, _ int) analysis {
+	result := stanalysis.Analyze(text, stanalysis.Options{
+		Prelude:    prelude,
+		ScalarMode: stanalysis.IECStrict,
+	})
+	a := analysis{scopes: scanScopes(text)}
+	for _, symbol := range result.Symbols {
+		a.Symbols = append(a.Symbols, Symbol{
+			Name: symbol.Name, Datatype: symbol.Datatype,
+			BlockKind: symbol.BlockKind, Container: symbol.Container, Pos: symbol.Pos,
 		})
-		return a
 	}
-
-	a.Symbols = collectSymbols(prog)
-
-	lowerProg := prog
-	if prelude != "" {
-		// The prelude parsed on its own (stproject filters), so a combined
-		// parse only fails on pathological interactions — fall back to the
-		// solo program rather than losing lowering diagnostics entirely.
-		if combined, err := st.Parse(prelude + text); err == nil {
-			lowerProg = combined
-		} else {
-			preludeLines = 0
-		}
-	} else {
-		preludeLines = 0
+	contextAST := result.ContextAST
+	if contextAST == nil {
+		contextAST = result.AST
 	}
-	a.types = typeIndex(lowerProg.TypeDecls)
-	a.typeMembers = typeMemberIndex(lowerProg.TypeDecls)
-
-	if _, err := st.Lower(lowerProg); err != nil {
-		pos := st.Pos{Line: 1, Col: 1}
-		msg := err.Error()
-		if le, ok := st.AsLowerError(err); ok && le.Pos.Line > 0 {
-			// The squiggle already marks the line; drop the "line N:"
-			// prefix LowerError.Error() adds.
-			pos, msg = le.Pos, le.Err.Error()
-		}
-		if pos.Line > preludeLines {
-			pos.Line -= preludeLines
-		} else if preludeLines > 0 {
-			// The error sits inside a sibling library file (duplicate type,
-			// broken FB, ...). Surface it here at 1:1 so it isn't silently
-			// swallowed, but say where it came from.
-			pos = st.Pos{Line: 1, Col: 1}
-			msg = "in project library files: " + msg
-		}
+	if contextAST != nil {
+		a.types = typeIndex(contextAST.TypeDecls)
+		a.typeMembers = typeMemberIndex(contextAST.TypeDecls)
+	}
+	for _, diagnostic := range result.Diagnostics {
 		a.Diags = append(a.Diags, Diagnostic{
-			Range:    posRange(text, pos),
+			Range:    posRange(text, diagnostic.Pos),
 			Severity: SeverityError,
 			Source:   "nautilus-st",
-			Message:  msg,
+			Message:  diagnostic.Message,
 		})
 	}
 	return a
@@ -525,41 +490,6 @@ func baseTypeName(datatype string) string {
 func (a *analysis) typeExpansion(datatype string) (string, bool) {
 	def, ok := a.types[strings.ToLower(baseTypeName(datatype))]
 	return def, ok
-}
-
-// collectSymbols flattens the program's declarations into a lookup index.
-func collectSymbols(prog *st.Program) []Symbol {
-	var syms []Symbol
-	addBlocks := func(container string, blocks []st.VarBlock) {
-		for _, b := range blocks {
-			for _, v := range b.Variables {
-				syms = append(syms, Symbol{
-					Name: v.Name, Datatype: v.Datatype,
-					BlockKind: b.Kind, Container: container, Pos: v.Pos,
-				})
-			}
-		}
-	}
-	// Program-level vars use container "" — the same value containerAt
-	// returns for lines outside any FB/FUNCTION body — so scoped lookup
-	// and completion treat the program body as the default scope.
-	addBlocks("", prog.VarBlocks)
-	for _, t := range prog.TypeDecls {
-		syms = append(syms, Symbol{Name: t.Name, Datatype: t.Type.String(), BlockKind: "TYPE", Pos: t.Pos})
-	}
-	for _, fb := range prog.FBDecls {
-		syms = append(syms, Symbol{Name: fb.Name, Datatype: fb.Name, BlockKind: "FUNCTION_BLOCK", Pos: fb.Pos})
-		addBlocks(fb.Name, fb.VarBlocks)
-	}
-	for _, fn := range prog.FuncDecls {
-		dt := ""
-		if fn.ReturnType != nil {
-			dt = fn.ReturnType.String()
-		}
-		syms = append(syms, Symbol{Name: fn.Name, Datatype: dt, BlockKind: "FUNCTION", Pos: fn.Pos})
-		addBlocks(fn.Name, fn.VarBlocks)
-	}
-	return syms
 }
 
 // scanScopes finds FUNCTION_BLOCK/FUNCTION body line spans textually. The

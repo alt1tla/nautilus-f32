@@ -79,6 +79,26 @@ END_PROGRAM`
 	}
 }
 
+func TestAnalyzeWithPreludeKeepsDocumentCoordinates(t *testing.T) {
+	prelude := "TYPE\n  Header : STRUCT\n    Valid : BOOL;\n  END_STRUCT;\nEND_TYPE\n"
+	source := "PROGRAM Main\nVAR H : Header; END_VAR\nH.Valid := Missing;\nEND_PROGRAM\n"
+	result := Analyze(source, Options{Prelude: prelude})
+	if result.ContextAST == nil || result.ContextAST == result.AST {
+		t.Fatal("Analyze() did not retain the combined prelude context AST")
+	}
+	if len(result.Diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v, want one", result.Diagnostics)
+	}
+	if result.Diagnostics[0].Pos.Line != 3 {
+		t.Fatalf("diagnostic line = %d, want document line 3", result.Diagnostics[0].Pos.Line)
+	}
+	for _, symbol := range result.Symbols {
+		if symbol.Name == "Header" {
+			t.Fatal("document symbols unexpectedly contain a prelude declaration")
+		}
+	}
+}
+
 func TestFloat32ScalarAcceptsNumericBoolAndTime(t *testing.T) {
 	source := `PROGRAM Main
 VAR
